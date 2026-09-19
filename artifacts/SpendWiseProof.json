@@ -1,0 +1,148 @@
+{
+  "compiler": "0.8.20+commit.a1b79de6.Emscripten.clang",
+  "evmVersion": "paris",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "AlreadyRecorded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "EmptyExpenseId",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAmount",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "expenseId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amountMinor",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes3",
+          "name": "currency",
+          "type": "bytes3"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "detailsHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "date",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "recordedAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "ExpenseRecorded",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "expenses",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "amountMinor",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes3",
+          "name": "currency",
+          "type": "bytes3"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "detailsHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "date",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "recordedAt",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "expenseId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amountMinor",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes3",
+          "name": "currency",
+          "type": "bytes3"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "detailsHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "date",
+          "type": "uint32"
+        }
+      ],
+      "name": "recordExpense",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608060405234801561001057600080fd5b506103c5806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c806343f9d2651461003b5780638bc1ace3146100b1575b600080fd5b6100976100493660046102ae565b60006020818152928152604080822090935290815220805460018201546002830154600390930154919260e89190911b9163ffffffff811690640100000000900467ffffffffffffffff1685565b6040516100a89594939291906102e6565b60405180910390f35b6100c46100bf366004610323565b6100c6565b005b846100e4576040516327f97a9360e01b815260040160405180910390fd5b836000036101055760405163162908e360e11b815260040160405180910390fd5b33600090815260208181526040808320888452909152902060030154640100000000900467ffffffffffffffff16156101515760405163081da57f60e11b815260040160405180910390fd5b60004290506040518060a00160405280868152602001856001600160e81b03191681526020018481526020018363ffffffff1681526020018267ffffffffffffffff16815250600080336001600160a01b03166001600160a01b0316815260200190815260200160002060008881526020019081526020016000206000820151816000015560208201518160010160006101000a81548162ffffff021916908360e81c02179055506040820151816002015560608201518160030160006101000a81548163ffffffff021916908363ffffffff16021790555060808201518160030160046101000a81548167ffffffffffffffff021916908367ffffffffffffffff16021790555090505085336001600160a01b03167fe9fb0fc26de365ba4a805f4da6c94c3f61a35560a741f2bf048e0832a5b87aba878787878760405161029e9594939291906102e6565b60405180910390a3505050505050565b600080604083850312156102c157600080fd5b82356001600160a01b03811681146102d857600080fd5b946020939093013593505050565b9485526001600160e81b0319939093166020850152604084019190915263ffffffff16606083015267ffffffffffffffff16608082015260a00190565b600080600080600060a0868803121561033b57600080fd5b853594506020860135935060408601356001600160e81b03198116811461036157600080fd5b925060608601359150608086013563ffffffff8116811461038157600080fd5b80915050929550929590935056fea264697066735822122082f619ebb7a99e495179d3517f93f0f234623951ae0a5fbc74c66935e1693e0964736f6c63430008140033"
+}
