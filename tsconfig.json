@@ -27,10 +27,7 @@
         "./*"
       ]
     },
-    "types": [
-      "node",
-      "@cloudflare/workers-types"
-    ]
+    "types": ["node"]
   },
   "include": [
     "next-env.d.ts",
@@ -42,6 +39,11 @@
   ],
   "exclude": [
     "node_modules",
-    "examples"
+    "examples",
+    "db",
+    "build",
+    "scripts",
+    "vite.config.ts",
+    "drizzle.config.ts"
   ]
 }

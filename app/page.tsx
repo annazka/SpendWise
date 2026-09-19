@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeftRight,
   ArrowUpRight,
@@ -48,6 +49,33 @@ type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rp
 const categories = ["Food & drinks", "Groceries", "Transport", "Shopping", "Other"];
 const today = () => new Date().toLocaleDateString("en-CA");
 
+type StoredAccount = { account: Account; expenses: Expense[] };
+
+function emptyAccount(currency: Currency): StoredAccount {
+  return {
+    account: { currency, budget_amount: null, budget_start: null, budget_end: null },
+    expenses: [],
+  };
+}
+
+function storageKey(wallet: string, currency: Currency) {
+  return `spendwise:${wallet.toLowerCase()}:${currency}`;
+}
+
+function readStoredAccount(wallet: string, currency: Currency): StoredAccount {
+  try {
+    const saved = localStorage.getItem(storageKey(wallet, currency));
+    if (!saved) return emptyAccount(currency);
+    const parsed = JSON.parse(saved) as StoredAccount;
+    return {
+      account: { ...emptyAccount(currency).account, ...parsed.account, currency },
+      expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+    };
+  } catch {
+    return emptyAccount(currency);
+  }
+}
+
 function toMinor(value: string, currency: Currency) {
   const number = Number(value);
   const factor = 10 ** CURRENCIES[currency].decimals;
@@ -78,37 +106,28 @@ export default function Home() {
   const [form, setForm] = useState({ store: "", date: today(), amount: "", category: "Other" });
 
   useEffect(() => {
-    fetch("/api/auth")
-      .then(async (response) => ({ response, data: await response.json() as { authenticated?: boolean; wallet?: string } }))
-      .then(({ data }) => {
-        if (data.authenticated && data.wallet) {
-          setWallet(data.wallet);
-          setAuth("connected");
-        } else setAuth("guest");
-      })
-      .catch(() => setAuth("guest"));
+    queueMicrotask(() => {
+      const savedWallet = localStorage.getItem("spendwise:connected-wallet");
+      if (savedWallet) {
+        setWallet(savedWallet);
+        setAuth("connected");
+      } else setAuth("guest");
+    });
   }, []);
 
   async function loadAccount(selected: Currency) {
     setLoaded(false);
-    const response = await fetch(`/api/data?currency=${selected}`);
-    const data = await response.json() as {
-      account?: Account;
-      transactions?: Expense[];
-      config?: Config;
-      wallet?: string;
-      error?: string;
-    };
-    if (response.status === 401) {
-      setAuth("guest");
-      setCurrency(null);
-      throw new Error("Your wallet session ended. Please connect again.");
-    }
-    if (!response.ok || !data.account || !data.config) throw new Error(data.error || "Could not load this currency account.");
+    const data = readStoredAccount(wallet, selected);
     setAccount(data.account);
-    setExpenses(data.transactions || []);
-    setConfig(data.config);
-    if (data.wallet) setWallet(data.wallet);
+    setExpenses(data.expenses);
+    const chainId = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 968);
+    setConfig({
+      aiEnabled: process.env.NEXT_PUBLIC_AI_ENABLED !== "false",
+      contractAddress: process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "",
+      chainId,
+      rpc: process.env.NEXT_PUBLIC_BOT_RPC || (chainId === 677 ? "https://rpc.botchain.ai" : "https://rpc.bohr.life"),
+      explorer: process.env.NEXT_PUBLIC_BOT_EXPLORER || (chainId === 677 ? "https://scan.botchain.ai" : "https://scan.bohr.life"),
+    });
     setCurrency(selected);
     setLoaded(true);
   }
@@ -117,6 +136,7 @@ export default function Home() {
     setBusy(true);
     try {
       const address = await authenticateWallet();
+      localStorage.setItem("spendwise:connected-wallet", address);
       setWallet(address);
       setAuth("connected");
       setCurrency(null);
@@ -129,7 +149,7 @@ export default function Home() {
   }
 
   async function disconnect() {
-    await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect" }) });
+    localStorage.removeItem("spendwise:connected-wallet");
     setAuth("guest");
     setWallet("");
     setCurrency(null);
@@ -138,13 +158,29 @@ export default function Home() {
   }
 
   async function save(action: string, data: Record<string, unknown>) {
-    const response = await fetch("/api/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, data }),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error || "Could not save your changes.");
+    if (!currency || !wallet) throw new Error("Choose a currency account first.");
+    const stored = readStoredAccount(wallet, currency);
+    if (action === "budget") {
+      const amount = typeof data.amount === "number" ? data.amount : null;
+      stored.account = {
+        ...stored.account,
+        budget_amount: amount,
+        budget_start: amount == null ? null : String(data.start || ""),
+        budget_end: amount == null ? null : String(data.end || ""),
+      };
+    } else if (action === "transaction") {
+      stored.expenses.unshift({
+        id: String(data.id),
+        store: String(data.store),
+        date: String(data.date),
+        amount: Number(data.amount),
+        category: String(data.category),
+        currency,
+        tx_hash: typeof data.txHash === "string" ? data.txHash : null,
+        onchain_id: typeof data.onchainId === "string" ? data.onchainId : null,
+      });
+    } else throw new Error("Unsupported save action.");
+    localStorage.setItem(storageKey(wallet, currency), JSON.stringify(stored));
   }
 
   async function scan(file: File) {
@@ -223,7 +259,7 @@ export default function Home() {
   return <>
     <Toaster richColors />
     <header className="topbar">
-      <a className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></a>
+      <Link className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
         <button className="account-switch" onClick={() => setCurrency(null)}><ArrowLeftRight size={15} />{currency} Account</button>
         <button className="wallet-btn" onClick={disconnect}><Wallet size={17} />{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button>
@@ -387,7 +423,7 @@ function WalletGate({ busy, onConnect }: { busy: boolean; onConnect(): void }) {
 function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; onChoose(currency: Currency): void; onDisconnect(): void }) {
   return <main className="currency-gate">
     <Toaster richColors />
-    <header className="picker-head"><a className="brand" href="/"><span className="brandmark">S</span>SpendWise</a><button className="wallet-btn" onClick={onDisconnect}>{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button></header>
+    <header className="picker-head"><Link className="brand" href="/"><span className="brandmark">S</span>SpendWise</Link><button className="wallet-btn" onClick={onDisconnect}>{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button></header>
     <section className="picker-content">
       <p className="eyebrow">CHOOSE YOUR MONEY SPACE</p>
       <h1>Select a currency account.</h1>

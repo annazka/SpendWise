@@ -14,22 +14,10 @@ export async function authenticateWallet() {
   const provider = ethereum();
   const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
   const wallet = accounts[0];
-  const challengeResponse = await fetch("/api/auth", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "challenge", wallet }),
-  });
-  const challenge = await challengeResponse.json() as { message?: string; error?: string };
-  if (!challengeResponse.ok || !challenge.message) throw new Error(challenge.error || "Could not start wallet sign-in.");
-  const signature = await provider.request({ method: "personal_sign", params: [challenge.message, wallet] }) as string;
-  const verifyResponse = await fetch("/api/auth", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "verify", wallet, signature }),
-  });
-  const verified = await verifyResponse.json() as { wallet?: string; error?: string };
-  if (!verifyResponse.ok || !verified.wallet) throw new Error(verified.error || "Wallet sign-in failed.");
-  return verified.wallet;
+  if (!wallet) throw new Error("No wallet account was selected.");
+  const message = `Sign in to SpendWise\n\nWallet: ${wallet}\nThis signature is free and does not submit a blockchain transaction.`;
+  await provider.request({ method: "personal_sign", params: [message, wallet] });
+  return wallet;
 }
 
 export async function recordExpense(
