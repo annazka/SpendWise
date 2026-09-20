@@ -33,6 +33,8 @@ const CURRENCIES = {
 } as const;
 
 type Currency = keyof typeof CURRENCIES;
+type DateRange = "1" | "7" | "30" | "all";
+type TransactionSort = "date-desc" | "date-asc" | "amount-desc";
 type Account = { currency: Currency; budget_amount: number | null; budget_start: string | null; budget_end: string | null };
 type Expense = {
   id: string;
@@ -94,6 +96,16 @@ function fromMinor(value: number, currency: Currency) {
   }).format(value / 10 ** CURRENCIES[currency].decimals);
 }
 
+function isWithinDateRange(date: string, range: DateRange) {
+  if (range === "all") return true;
+  const days = Number(range);
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const transactionDate = new Date(`${date}T00:00:00`);
+  return !Number.isNaN(transactionDate.getTime()) && transactionDate >= start;
+}
+
 export default function Home() {
   const [auth, setAuth] = useState<"checking" | "guest" | "connected">("checking");
   const [wallet, setWallet] = useState("");
@@ -102,6 +114,9 @@ export default function Home() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [config, setConfig] = useState<Config>({ aiEnabled: false, contractAddress: "", chainId: 968, rpc: "", explorer: "" });
   const [tab, setTab] = useState("overview");
+  const [transactionRange, setTransactionRange] = useState<DateRange>("all");
+  const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
+  const [reportRange, setReportRange] = useState<DateRange>("all");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -281,11 +296,12 @@ export default function Home() {
     const approvedByCurrency = (Object.keys(CURRENCIES) as Currency[])
       .map((code) => ({
         currency: code,
-        expenses: readStoredAccount(wallet, code).expenses.filter((expense) => expense.validation_status === "APPROVED"),
+        expenses: readStoredAccount(wallet, code).expenses.filter((expense) =>
+          expense.validation_status === "APPROVED" && isWithinDateRange(expense.date, reportRange)),
       }))
       .filter((group) => group.expenses.length > 0);
 
-    if (!approvedByCurrency.length) return toast.error("No approved transactions are available to export.");
+    if (!approvedByCurrency.length) return toast.error("No approved transactions are available in this period.");
 
     setBusy(true);
     try {
@@ -313,9 +329,10 @@ export default function Home() {
       pdf.text("Status: ELIGIBLE FOR SUBMISSION", 15, 67);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(90, 105, 100);
-      pdf.text("This report contains only receipts approved by SpendWise AI validation.", 15, 73);
+      pdf.text(`Period: ${reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`}`, 15, 73);
+      pdf.text("This report contains only receipts approved by SpendWise AI validation.", 15, 78);
 
-      let y = 82;
+      let y = 87;
       for (const group of approvedByCurrency) {
         const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
         if (y > 235) {
@@ -360,7 +377,7 @@ export default function Home() {
         pdf.text(`Page ${page} of ${pages}`, 195, 288, { align: "right" });
       }
 
-      pdf.save(`SpendWise-Reimbursement-${reportId}.pdf`);
+      pdf.save(`SpendWise-Reimbursement-${reportRange === "all" ? "All" : `${reportRange}Days`}-${reportId}.pdf`);
       toast.success("Reimbursement PDF downloaded");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF.");
@@ -379,6 +396,13 @@ export default function Home() {
   const days = account?.budget_end && today() <= account.budget_end
     ? Math.max(0, Math.round((Date.parse(account.budget_end) - Date.parse(today() < (account.budget_start || "") ? account.budget_start! : today())) / 86_400_000) + 1)
     : 0;
+  const filteredExpenses = useMemo(() => expenses
+    .filter((expense) => isWithinDateRange(expense.date, transactionRange))
+    .sort((a, b) => {
+      if (transactionSort === "amount-desc") return b.amount - a.amount;
+      const dateOrder = a.date.localeCompare(b.date);
+      return transactionSort === "date-asc" ? dateOrder : -dateOrder;
+    }), [expenses, transactionRange, transactionSort]);
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -493,8 +517,15 @@ export default function Home() {
 
         <TabsContent value="transactions">
           <section className="panel">
-            <div className="sectionhead"><h2>{currency} transactions <span className="count">{expenses.length}</span></h2><div className="section-actions"><button className="secondary" disabled={busy} onClick={downloadReimbursementReport}><Download size={16} />Download reimbursement PDF</button><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div></div>
-            {expenses.length ? expenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
+            <div className="sectionhead"><h2>{currency} transactions <span className="count">{filteredExpenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div>
+            <div className="transaction-toolbar">
+              <div className="filter-group">
+                <label>Show<select aria-label="Transaction period" value={transactionRange} onChange={(event) => setTransactionRange(event.target.value as DateRange)}><option value="1">Last 1 day</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="all">All transactions</option></select></label>
+                <label>Sort by<select aria-label="Transaction order" value={transactionSort} onChange={(event) => setTransactionSort(event.target.value as TransactionSort)}><option value="date-desc">Newest date</option><option value="date-asc">Oldest date</option><option value="amount-desc">Largest amount</option></select></label>
+              </div>
+              <div className="report-controls"><select aria-label="Reimbursement report period" value={reportRange} onChange={(event) => setReportRange(event.target.value as DateRange)}><option value="1">PDF, last 1 day</option><option value="7">PDF, last 7 days</option><option value="30">PDF, last 30 days</option><option value="all">PDF, all transactions</option></select><button className="secondary" disabled={busy} onClick={downloadReimbursementReport}><Download size={16} />Download PDF</button></div>
+            </div>
+            {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
         </TabsContent>
       </Tabs>
