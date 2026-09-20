@@ -11,6 +11,7 @@ import {
   Coffee,
   Download,
   LogOut,
+  Eye,
   ReceiptText,
   ScanLine,
   ShieldCheck,
@@ -48,6 +49,7 @@ type Expense = {
   validation_status: "APPROVED";
   receipt_hash: string;
   provider_document_id: string | null;
+  receipt_file_key?: string | null;
 };
 type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rpc: string; explorer: string };
 
@@ -79,6 +81,42 @@ function readStoredAccount(wallet: string, currency: Currency): StoredAccount {
   } catch {
     return emptyAccount(currency);
   }
+}
+
+const RECEIPT_DB = "spendwise-receipts";
+const RECEIPT_STORE = "receipts";
+
+function openReceiptDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(RECEIPT_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(RECEIPT_STORE)) request.result.createObjectStore(RECEIPT_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function storeReceiptFile(key: string, file: File) {
+  const database = await openReceiptDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(RECEIPT_STORE, "readwrite");
+    transaction.objectStore(RECEIPT_STORE).put(file, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+async function getReceiptFile(key: string) {
+  const database = await openReceiptDatabase();
+  const file = await new Promise<Blob | undefined>((resolve, reject) => {
+    const request = database.transaction(RECEIPT_STORE, "readonly").objectStore(RECEIPT_STORE).get(key);
+    request.onsuccess = () => resolve(request.result as Blob | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return file;
 }
 
 function toMinor(value: string, currency: Currency) {
@@ -127,6 +165,8 @@ export default function Home() {
   const [scanMessage, setScanMessage] = useState("");
   const [receiptHash, setReceiptHash] = useState("");
   const [providerDocumentId, setProviderDocumentId] = useState<string | null>(null);
+  const [scannedReceipt, setScannedReceipt] = useState<File | null>(null);
+  const [receiptViewer, setReceiptViewer] = useState<{ url: string; type: string } | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -204,6 +244,7 @@ export default function Home() {
         validation_status: "APPROVED",
         receipt_hash: String(data.receiptHash),
         provider_document_id: typeof data.providerDocumentId === "string" ? data.providerDocumentId : null,
+        receipt_file_key: typeof data.receiptFileKey === "string" ? data.receiptFileKey : null,
       });
     } else throw new Error("Unsupported save action.");
     localStorage.setItem(storageKey(wallet, currency), JSON.stringify(stored));
@@ -217,6 +258,7 @@ export default function Home() {
     setScanStatus("VALIDATING");
     setScanMessage("AI is checking the receipt authenticity and reading its details.");
     setReceiptHash("");
+    setScannedReceipt(file);
     setBusy(true);
     try {
       const body = new FormData();
@@ -228,6 +270,7 @@ export default function Home() {
         setScanStatus("REJECTED");
         setScanMessage(data.reasons?.join(" ") || data.error || "This receipt could not be verified.");
         setForm({ store: "", date: today(), amount: "", category: "Other" });
+        setScannedReceipt(null);
         throw new Error(data.reasons?.[0] || data.error || "This receipt could not be verified.");
       }
       if (expenses.some((expense) => expense.receipt_hash && expense.receipt_hash === data.receiptHash)) {
@@ -264,6 +307,11 @@ export default function Home() {
     try {
       const id = crypto.randomUUID();
       const chain = await recordExpense({ id, ...form, amountMinor, currency, receiptHash }, config);
+      let receiptFileKey: string | null = null;
+      if (scannedReceipt) {
+        receiptFileKey = `${wallet.toLowerCase()}:${id}`;
+        await storeReceiptFile(receiptFileKey, scannedReceipt);
+      }
       await save("transaction", {
         id,
         store: form.store,
@@ -275,6 +323,7 @@ export default function Home() {
         onchainId: chain.onchainId,
         receiptHash,
         providerDocumentId,
+        receiptFileKey,
       });
       setForm({ store: "", date: today(), amount: "", category: "Other" });
       setPreview("");
@@ -282,6 +331,7 @@ export default function Home() {
       setScanMessage("");
       setReceiptHash("");
       setProviderDocumentId(null);
+      setScannedReceipt(null);
       await loadAccount(currency);
       setTab("overview");
       toast.success(chain.txHash ? "Expense recorded on BOT Chain" : "Expense saved locally");
@@ -290,6 +340,18 @@ export default function Home() {
       toast.error(message.includes("user rejected") ? "Transaction cancelled. Your form is still here." : message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function viewReceipt(expense: Expense) {
+    if (!expense.receipt_file_key) return toast.error("The original file is unavailable because this receipt was saved before file storage was enabled.");
+    try {
+      const file = await getReceiptFile(expense.receipt_file_key);
+      if (!file) return toast.error("The original receipt file is no longer available on this device.");
+      if (receiptViewer?.url) URL.revokeObjectURL(receiptViewer.url);
+      setReceiptViewer({ url: URL.createObjectURL(file), type: file.type });
+    } catch {
+      toast.error("Could not open the original receipt file.");
     }
   }
 
@@ -480,7 +542,7 @@ export default function Home() {
           <div className="lower-grid">
             <section className="panel">
               <div className="sectionhead"><h2>Recent transactions</h2><button className="text-btn" onClick={() => setTab("transactions")}>View all <ArrowUpRight size={16} /></button></div>
-              {expenses.length ? expenses.slice(0, 4).map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
+              {expenses.length ? expenses.slice(0, 4).map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
             <section className="scan-card">
               <span className="icon-square"><ShieldCheck size={25} /></span>
@@ -506,7 +568,7 @@ export default function Home() {
                 {scanStatus === "APPROVED" ? <CheckCircle2 size={20} /> : scanStatus === "REJECTED" ? <XCircle size={20} /> : <ScanLine size={20} />}
                 <span><strong>{scanStatus === "APPROVED" ? "APPROVED RECEIPT" : scanStatus}</strong><small>{scanMessage}</small></span>
               </div>}
-              <p className="small-note">Receipt images are processed for extraction and are not stored by SpendWise.</p>
+              <p className="small-note">After approval, the original receipt is stored locally on this device so you can view it again from Transactions.</p>
               {!config.aiEnabled && <p className="notice">AI scanning is awaiting Veryfi setup. Manual expense entry is disabled.</p>}
             </section>
             <form className="panel form" onSubmit={submitExpense}>
@@ -532,7 +594,7 @@ export default function Home() {
               </div>
               <button className="secondary" disabled={busy} onClick={() => setReportOpen(true)}><Download size={16} />Download reimbursement PDF</button>
             </div>
-            {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
+            {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
         </TabsContent>
       </Tabs>
@@ -584,6 +646,20 @@ export default function Home() {
         <div className="dialog-actions"><button type="button" className="secondary" onClick={() => setReportOpen(false)}>Cancel</button><button type="button" className="primary" disabled={busy || reportTransactionCount === 0} onClick={downloadReimbursementReport}><Download size={16} />{busy ? "Generating PDF…" : "Download PDF"}</button></div>
       </DialogContent>
     </Dialog>
+
+    <Dialog open={Boolean(receiptViewer)} onOpenChange={(open) => {
+      if (!open && receiptViewer?.url) {
+        URL.revokeObjectURL(receiptViewer.url);
+        setReceiptViewer(null);
+      }
+    }}>
+      <DialogContent className="receipt-dialog">
+        <DialogTitle>Original scanned receipt</DialogTitle>
+        <DialogDescription>This is the original file stored on this device after AI verification.</DialogDescription>
+        {receiptViewer?.type === "application/pdf" ? <iframe className="receipt-document" src={receiptViewer.url} title="Original scanned receipt PDF" /> : receiptViewer && <img className="receipt-document" src={receiptViewer.url} alt="Original scanned receipt" />}
+        {receiptViewer && <a className="secondary receipt-file-link" href={receiptViewer.url} target="_blank" rel="noreferrer">Open original file <ArrowUpRight size={16} /></a>}
+      </DialogContent>
+    </Dialog>
   </>;
 }
 
@@ -629,11 +705,12 @@ function EmptyTransactions({ onAdd }: { onAdd(): void }) {
   return <div className="empty-state"><ReceiptText size={32} /><h3>No verified receipts in this account yet.</h3><p>Scan your first receipt. Manual expense entry is not available.</p><button className="text-btn" onClick={onAdd}>Scan receipt <ArrowUpRight size={16} /></button></div>;
 }
 
-function Transaction({ expense, config }: { expense: Expense; config: Config }) {
+function Transaction({ expense, config, onViewReceipt }: { expense: Expense; config: Config; onViewReceipt(expense: Expense): void }) {
   const Icon = expense.category === "Food & drinks" ? Coffee : expense.category === "Transport" ? Bus : ShoppingBag;
   return <div className="transaction">
     <span className={`tx-icon ${expense.category === "Food & drinks" ? "orange" : expense.category === "Transport" ? "blue" : "green"}`}><Icon size={20} /></span>
     <div className="tx-description"><strong>{expense.store}</strong><span>{expense.category} · {expense.date}</span></div>
+    <button className="receipt-view-button" type="button" onClick={() => onViewReceipt(expense)}><Eye size={15} />View scanned receipt</button>
     <div className="tx-proof">{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer"><CheckCircle2 size={13} />On-chain</a> : <span><CheckCircle2 size={13} />AI verified</span>}<strong>−{fromMinor(expense.amount, expense.currency)}</strong></div>
   </div>;
 }
