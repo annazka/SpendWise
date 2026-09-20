@@ -10,8 +10,8 @@ Each Currency Account has its own expense history and optional budget. This is r
 
 1. Connect a MetaMask-compatible wallet and sign a free login message.
 2. Choose an IDR, USD, MYR, or SGD Currency Account.
-3. Scan a receipt with AI or enter an expense manually.
-4. Review the merchant, date, amount, and category.
+3. Scan a receipt with Veryfi AI. Manual entry is disabled.
+4. Veryfi validates the document and extracts merchant, date, amount, currency, and category.
 5. Optionally set a budget and date range.
 6. Record the expense on BOT Chain when the contract is configured.
 
@@ -21,8 +21,10 @@ Each Currency Account has its own expense history and optional budget. This is r
 - Wallet connection and free signature login.
 - Four separated Currency Accounts.
 - Optional budgets.
-- Manual expense entry.
-- AI receipt extraction through a protected server API route.
+- Receipt-only expense entry. Users cannot type or edit expense data manually.
+- Veryfi receipt validation and extraction through a protected Vercel server route.
+- `VALIDATING`, `APPROVED`, and `REJECTED` validation states.
+- Local and provider duplicate checks plus receipt SHA-256 hashing.
 - BOT Chain smart-contract integration.
 - Responsive dashboard and transaction history.
 
@@ -33,7 +35,7 @@ For this hackathon MVP, budgets and expense history are stored in the browser an
 - Next.js App Router
 - React and TypeScript
 - Vercel serverless route for receipt scanning
-- OpenAI image input
+- Veryfi Data Extraction API
 - ethers v6 and MetaMask
 - Solidity 0.8.20
 - Local browser storage for the hackathon MVP
@@ -48,8 +50,9 @@ pnpm dev
 Create `.env.local` based on `.env.example`.
 
 ```text
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
+VERYFI_CLIENT_ID=
+VERYFI_USERNAME=
+VERYFI_API_KEY=
 NEXT_PUBLIC_AI_ENABLED=true
 NEXT_PUBLIC_BOT_CHAIN_ID=968
 NEXT_PUBLIC_BOT_CONTRACT_ADDRESS=
@@ -92,7 +95,7 @@ Always test on BOT Chain Testnet before deploying to mainnet.
 
 ## Hackathon checklist
 
-- [ ] Add `OPENAI_API_KEY` to Vercel and test several receipts.
+- [ ] Add the three `VERYFI_*` credentials to Vercel and test several receipts.
 - [ ] Deploy the contract to BOT Chain Testnet.
 - [ ] Add the testnet address to Vercel and this README.
 - [ ] Test wallet connection and expense recording end to end.

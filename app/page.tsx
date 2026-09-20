@@ -10,17 +10,16 @@ import {
   CheckCircle2,
   Coffee,
   LogOut,
-  Plus,
   ReceiptText,
   ScanLine,
   ShieldCheck,
   ShoppingBag,
   TrendingDown,
   Wallet,
+  XCircle,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster, toast } from "sonner";
 import { authenticateWallet, recordExpense } from "@/lib/chain";
@@ -43,6 +42,9 @@ type Expense = {
   currency: Currency;
   tx_hash: string | null;
   onchain_id: string | null;
+  validation_status: "APPROVED";
+  receipt_hash: string;
+  provider_document_id: string | null;
 };
 type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rpc: string; explorer: string };
 
@@ -104,6 +106,10 @@ export default function Home() {
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [preview, setPreview] = useState("");
   const [form, setForm] = useState({ store: "", date: today(), amount: "", category: "Other" });
+  const [scanStatus, setScanStatus] = useState<"IDLE" | "VALIDATING" | "APPROVED" | "REJECTED">("IDLE");
+  const [scanMessage, setScanMessage] = useState("");
+  const [receiptHash, setReceiptHash] = useState("");
+  const [providerDocumentId, setProviderDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -178,6 +184,9 @@ export default function Home() {
         currency,
         tx_hash: typeof data.txHash === "string" ? data.txHash : null,
         onchain_id: typeof data.onchainId === "string" ? data.onchainId : null,
+        validation_status: "APPROVED",
+        receipt_hash: String(data.receiptHash),
+        provider_document_id: typeof data.providerDocumentId === "string" ? data.providerDocumentId : null,
       });
     } else throw new Error("Unsupported save action.");
     localStorage.setItem(storageKey(wallet, currency), JSON.stringify(stored));
@@ -185,24 +194,43 @@ export default function Home() {
 
   async function scan(file: File) {
     if (!currency) return;
-    if (file.size > 8 * 1024 * 1024) return toast.error("Choose an image smaller than 8 MB.");
-    setPreview(URL.createObjectURL(file));
+    if (file.size > 20 * 1024 * 1024) return toast.error("Choose a receipt smaller than 20 MB.");
+    if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
+    setPreview(file.type === "application/pdf" ? "" : URL.createObjectURL(file));
+    setScanStatus("VALIDATING");
+    setScanMessage("AI is checking the receipt authenticity and reading its details.");
+    setReceiptHash("");
     setBusy(true);
     try {
       const body = new FormData();
       body.append("receipt", file);
       body.append("currency", currency);
       const response = await fetch("/api/scan", { method: "POST", body });
-      const data = await response.json() as { store?: string; date?: string; amount?: number; category?: string; error?: string };
-      if (!response.ok) throw new Error(data.error || "Could not read this receipt.");
+      const data = await response.json() as { status?: "APPROVED" | "REJECTED"; store?: string; date?: string; amount?: number; category?: string; receiptHash?: string; providerDocumentId?: string | null; reasons?: string[]; error?: string };
+      if (!response.ok || data.status !== "APPROVED") {
+        setScanStatus("REJECTED");
+        setScanMessage(data.reasons?.join(" ") || data.error || "This receipt could not be verified.");
+        setForm({ store: "", date: today(), amount: "", category: "Other" });
+        throw new Error(data.reasons?.[0] || data.error || "This receipt could not be verified.");
+      }
+      if (expenses.some((expense) => expense.receipt_hash && expense.receipt_hash === data.receiptHash)) {
+        setScanStatus("REJECTED");
+        setScanMessage("This exact receipt has already been recorded in this currency account.");
+        throw new Error("Duplicate receipt detected.");
+      }
       setForm({
         store: data.store || "",
         date: data.date || today(),
         amount: data.amount == null ? "" : String(data.amount),
         category: categories.includes(data.category || "") ? data.category! : "Other",
       });
-      toast("Receipt read. Check every field before recording it.");
+      setReceiptHash(data.receiptHash || "");
+      setProviderDocumentId(data.providerDocumentId || null);
+      setScanStatus("APPROVED");
+      setScanMessage("Receipt verified. It is eligible for reimbursement submission.");
+      toast.success("Approved receipt. Ready to record.");
     } catch (error) {
+      setScanStatus((current) => current === "APPROVED" ? current : "REJECTED");
       toast.error(error instanceof Error ? error.message : "Could not read this receipt.");
     } finally {
       setBusy(false);
@@ -212,12 +240,13 @@ export default function Home() {
   async function submitExpense(event: React.FormEvent) {
     event.preventDefault();
     if (!currency) return;
+    if (scanStatus !== "APPROVED" || !receiptHash) return toast.error("Scan and verify a receipt first.");
     const amountMinor = toMinor(form.amount, currency);
     if (amountMinor < 1) return toast.error("Enter a valid amount.");
     setBusy(true);
     try {
       const id = crypto.randomUUID();
-      const chain = await recordExpense({ id, ...form, amountMinor, currency }, config);
+      const chain = await recordExpense({ id, ...form, amountMinor, currency, receiptHash }, config);
       await save("transaction", {
         id,
         store: form.store,
@@ -227,9 +256,15 @@ export default function Home() {
         currency,
         txHash: chain.txHash,
         onchainId: chain.onchainId,
+        receiptHash,
+        providerDocumentId,
       });
       setForm({ store: "", date: today(), amount: "", category: "Other" });
       setPreview("");
+      setScanStatus("IDLE");
+      setScanMessage("");
+      setReceiptHash("");
+      setProviderDocumentId(null);
       await loadAccount(currency);
       setTab("overview");
       toast.success(chain.txHash ? "Expense recorded on BOT Chain" : "Expense saved locally");
@@ -271,7 +306,7 @@ export default function Home() {
         <div className="navrow">
           <TabsList className="navtabs" variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="add">Add Expense</TabsTrigger>
+            <TabsTrigger value="add">Scan Receipt</TabsTrigger>
             <TabsTrigger value="transactions">Transactions</TabsTrigger>
           </TabsList>
           <span className="currency">{CURRENCIES[currency].name}</span>
@@ -281,9 +316,9 @@ export default function Home() {
           <div>
             <p className="eyebrow">{currency} CURRENCY ACCOUNT</p>
             <h1>{tab === "overview" ? "Make room for what matters." : tab === "add" ? "Record what you spent." : "Every expense, in one place."}</h1>
-            <p className="muted">{tab === "overview" ? "Track freely, or add an optional budget when you want a limit." : tab === "add" ? "Scan a receipt or enter the details yourself." : "Only transactions from this currency account appear here."}</p>
+            <p className="muted">{tab === "overview" ? "Track freely, or add an optional budget when you want a limit." : tab === "add" ? "Every expense must come from an AI-verified receipt." : "Only transactions from this currency account appear here."}</p>
           </div>
-          {tab === "overview" && <button className="primary" onClick={() => setTab("add")}><Plus size={18} />Add expense</button>}
+          {tab === "overview" && <button className="primary" onClick={() => setTab("add")}><ScanLine size={18} />Scan receipt</button>}
         </div>
 
         {!loaded && <p role="status">Loading your {currency} account…</p>}
@@ -337,30 +372,35 @@ export default function Home() {
           <div className="scan-grid">
             <section className="panel">
               <h2>Scan a {currency} receipt</h2>
-              <p className="muted">JPG, PNG, or WebP, up to 8 MB. The receipt currency must match this account.</p>
+              <p className="muted">JPG, PNG, WebP, or PDF, up to 20 MB. The receipt currency must match this account.</p>
               <label className="dropzone">
                 <ScanLine size={44} /><strong>{busy ? "Reading your receipt…" : "Choose a receipt photo"}</strong><span>Use a clear image with the total visible</span>
-                <input aria-label="Upload receipt" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={(event) => event.target.files?.[0] && scan(event.target.files[0])} />
+                <input aria-label="Upload receipt" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={busy} onChange={(event) => event.target.files?.[0] && scan(event.target.files[0])} />
               </label>
-              {preview && <img className="receipt-preview" src={preview} alt="Receipt to review" />}
+              {preview && <img className="receipt-preview" src={preview} alt="Receipt being validated" />}
+              {scanStatus !== "IDLE" && <div className={`validation-card ${scanStatus.toLowerCase()}`}>
+                {scanStatus === "APPROVED" ? <CheckCircle2 size={20} /> : scanStatus === "REJECTED" ? <XCircle size={20} /> : <ScanLine size={20} />}
+                <span><strong>{scanStatus === "APPROVED" ? "APPROVED RECEIPT" : scanStatus}</strong><small>{scanMessage}</small></span>
+              </div>}
               <p className="small-note">Receipt images are processed for extraction and are not stored by SpendWise.</p>
-              {!config.aiEnabled && <p className="notice">AI scanning is awaiting API setup. Manual expense entry is available now.</p>}
+              {!config.aiEnabled && <p className="notice">AI scanning is awaiting Veryfi setup. Manual expense entry is disabled.</p>}
             </section>
             <form className="panel form" onSubmit={submitExpense}>
-              <div><h2>Review your expense</h2><p className="muted">You will confirm a wallet transaction when BOT Chain recording is active.</p></div>
-              <label>Merchant<input required maxLength={100} value={form.store} onChange={(event) => setForm({ ...form, store: event.target.value })} placeholder="e.g. Indomaret" /></label>
-              <label>Date<input type="date" required value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
-              <label>Amount, {currency}<input type="number" min={CURRENCIES[currency].decimals ? "0.01" : "1"} max="1000000000" step={CURRENCIES[currency].decimals ? "0.01" : "1"} required value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder={CURRENCIES[currency].decimals ? "32.00" : "65000"} /></label>
-              <label>Category<Select value={form.category} onValueChange={(value) => setForm({ ...form, category: value })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></label>
+              <div><h2>Verified receipt details</h2><p className="muted">Fields are filled by AI and cannot be entered or edited manually.</p></div>
+              <label>Merchant<input readOnly value={form.store} placeholder="Scan a receipt first" /></label>
+              <label>Date<input type="date" readOnly value={form.date} /></label>
+              <label>Amount, {currency}<input readOnly value={form.amount} placeholder="Scan a receipt first" /></label>
+              <label>Category<input readOnly value={form.category} /></label>
+              {receiptHash && <p className="hash-line"><strong>Receipt SHA-256</strong><span>{receiptHash}</span></p>}
               {!config.contractAddress && <p className="notice">The contract is not configured yet. This expense will be saved locally and marked “Local only”.</p>}
-              <button className="primary" disabled={busy || !loaded}>{busy ? "Please wait…" : config.contractAddress ? "Record Expense on BOT Chain" : "Save Expense Locally"}</button>
+              <button className="primary" disabled={busy || !loaded || scanStatus !== "APPROVED"}>{busy ? "Please wait…" : config.contractAddress ? "Record Verified Receipt on BOT Chain" : "Save Verified Receipt"}</button>
             </form>
           </div>
         </TabsContent>
 
         <TabsContent value="transactions">
           <section className="panel">
-            <div className="sectionhead"><h2>{currency} transactions <span className="count">{expenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><Plus size={16} />Add expense</button></div>
+            <div className="sectionhead"><h2>{currency} transactions <span className="count">{expenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div>
             {expenses.length ? expenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
         </TabsContent>
@@ -440,7 +480,7 @@ function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; on
 }
 
 function EmptyTransactions({ onAdd }: { onAdd(): void }) {
-  return <div className="empty-state"><ReceiptText size={32} /><h3>No expenses in this account yet.</h3><p>Scan a receipt or add your first expense manually.</p><button className="text-btn" onClick={onAdd}>Add expense <ArrowUpRight size={16} /></button></div>;
+  return <div className="empty-state"><ReceiptText size={32} /><h3>No verified receipts in this account yet.</h3><p>Scan your first receipt. Manual expense entry is not available.</p><button className="text-btn" onClick={onAdd}>Scan receipt <ArrowUpRight size={16} /></button></div>;
 }
 
 function Transaction({ expense, config }: { expense: Expense; config: Config }) {
@@ -448,6 +488,6 @@ function Transaction({ expense, config }: { expense: Expense; config: Config }) 
   return <div className="transaction">
     <span className={`tx-icon ${expense.category === "Food & drinks" ? "orange" : expense.category === "Transport" ? "blue" : "green"}`}><Icon size={20} /></span>
     <div className="tx-description"><strong>{expense.store}</strong><span>{expense.category} · {expense.date}</span></div>
-    <div className="tx-proof">{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer"><CheckCircle2 size={13} />On-chain</a> : <span>Local only</span>}<strong>−{fromMinor(expense.amount, expense.currency)}</strong></div>
+    <div className="tx-proof">{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer"><CheckCircle2 size={13} />On-chain</a> : <span><CheckCircle2 size={13} />AI verified</span>}<strong>−{fromMinor(expense.amount, expense.currency)}</strong></div>
   </div>;
 }

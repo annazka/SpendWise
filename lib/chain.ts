@@ -21,7 +21,7 @@ export async function authenticateWallet() {
 }
 
 export async function recordExpense(
-  expense: { id: string; store: string; date: string; amountMinor: number; currency: string; category: string },
+  expense: { id: string; store: string; date: string; amountMinor: number; currency: string; category: string; receiptHash: string },
   config: { contractAddress: string; chainId: number; explorer: string },
 ) {
   if (!isAddress(config.contractAddress)) return { txHash: null, onchainId: null, url: null };
@@ -43,6 +43,7 @@ export async function recordExpense(
     amountMinor: expense.amountMinor,
     currency: expense.currency,
     category: expense.category,
+    receiptHash: expense.receiptHash,
   })));
   const numericDate = Number(expense.date.replaceAll("-", ""));
   const currencyBytes = encodeBytes32String(expense.currency).slice(0, 8);
