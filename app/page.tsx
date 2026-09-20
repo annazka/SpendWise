@@ -9,6 +9,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Coffee,
+  Download,
   LogOut,
   ReceiptText,
   ScanLine,
@@ -276,6 +277,98 @@ export default function Home() {
     }
   }
 
+  async function downloadReimbursementReport() {
+    const approvedByCurrency = (Object.keys(CURRENCIES) as Currency[])
+      .map((code) => ({
+        currency: code,
+        expenses: readStoredAccount(wallet, code).expenses.filter((expense) => expense.validation_status === "APPROVED"),
+      }))
+      .filter((group) => group.expenses.length > 0);
+
+    if (!approvedByCurrency.length) return toast.error("No approved transactions are available to export.");
+
+    setBusy(true);
+    try {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+      const pdf = new jsPDF({ unit: "mm", format: "a4" });
+      const generatedAt = new Date();
+      const reportId = `SW-${generatedAt.toISOString().replace(/\D/g, "").slice(0, 14)}`;
+
+      pdf.setFillColor(18, 99, 77);
+      pdf.rect(0, 0, 210, 38, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(22);
+      pdf.text("SpendWise", 15, 17);
+      pdf.setFontSize(13);
+      pdf.text("AI-VERIFIED REIMBURSEMENT REPORT", 15, 27);
+
+      pdf.setTextColor(35, 55, 49);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Report ID: ${reportId}`, 15, 47);
+      pdf.text(`Generated: ${generatedAt.toLocaleString("en-GB")}`, 15, 53);
+      pdf.text(`Wallet: ${wallet}`, 15, 59);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Status: ELIGIBLE FOR SUBMISSION", 15, 67);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(90, 105, 100);
+      pdf.text("This report contains only receipts approved by SpendWise AI validation.", 15, 73);
+
+      let y = 82;
+      for (const group of approvedByCurrency) {
+        const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        if (y > 235) {
+          pdf.addPage();
+          y = 20;
+        }
+        pdf.setTextColor(35, 55, 49);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(12);
+        pdf.text(`${group.currency} ACCOUNT`, 15, y);
+        pdf.setFontSize(10);
+        pdf.text(`Total: ${fromMinor(total, group.currency)}`, 195, y, { align: "right" });
+
+        autoTable(pdf, {
+          startY: y + 5,
+          head: [["Date", "Merchant", "Category", "Amount", "Proof"]],
+          body: group.expenses.map((expense) => [
+            expense.date,
+            expense.store,
+            expense.category,
+            fromMinor(expense.amount, expense.currency),
+            expense.tx_hash ? `On-chain\n${expense.tx_hash}` : `AI verified\n${expense.receipt_hash}`,
+          ]),
+          styles: { fontSize: 7.5, cellPadding: 2.5, overflow: "linebreak" },
+          headStyles: { fillColor: [18, 99, 77], textColor: 255 },
+          columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 38 }, 2: { cellWidth: 28 }, 3: { cellWidth: 27 }, 4: { cellWidth: 70 } },
+          margin: { left: 15, right: 15 },
+        });
+        y = (pdf as typeof pdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y + 20;
+        y += 12;
+      }
+
+      const pages = pdf.getNumberOfPages();
+      for (let page = 1; page <= pages; page += 1) {
+        pdf.setPage(page);
+        pdf.setDrawColor(220, 228, 224);
+        pdf.line(15, 283, 195, 283);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(110, 120, 116);
+        pdf.text("AI validates receipt completeness and authenticity. Final reimbursement remains subject to organization policy.", 15, 288);
+        pdf.text(`Page ${page} of ${pages}`, 195, 288, { align: "right" });
+      }
+
+      pdf.save(`SpendWise-Reimbursement-${reportId}.pdf`);
+      toast.success("Reimbursement PDF downloaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const budget = account?.budget_amount ?? null;
   const periodExpenses = useMemo(() => {
     if (!account?.budget_start || !account.budget_end) return expenses;
@@ -400,7 +493,7 @@ export default function Home() {
 
         <TabsContent value="transactions">
           <section className="panel">
-            <div className="sectionhead"><h2>{currency} transactions <span className="count">{expenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div>
+            <div className="sectionhead"><h2>{currency} transactions <span className="count">{expenses.length}</span></h2><div className="section-actions"><button className="secondary" disabled={busy} onClick={downloadReimbursementReport}><Download size={16} />Download reimbursement PDF</button><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div></div>
             {expenses.length ? expenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
         </TabsContent>
