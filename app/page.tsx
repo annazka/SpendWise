@@ -117,6 +117,7 @@ export default function Home() {
   const [transactionRange, setTransactionRange] = useState<DateRange>("all");
   const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
   const [reportRange, setReportRange] = useState<DateRange>("all");
+  const [reportOpen, setReportOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -297,7 +298,8 @@ export default function Home() {
       .map((code) => ({
         currency: code,
         expenses: readStoredAccount(wallet, code).expenses.filter((expense) =>
-          expense.validation_status === "APPROVED" && isWithinDateRange(expense.date, reportRange)),
+          (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
+          .sort((a, b) => b.date.localeCompare(a.date)),
       }))
       .filter((group) => group.expenses.length > 0);
 
@@ -378,6 +380,7 @@ export default function Home() {
       }
 
       pdf.save(`SpendWise-Reimbursement-${reportRange === "all" ? "All" : `${reportRange}Days`}-${reportId}.pdf`);
+      setReportOpen(false);
       toast.success("Reimbursement PDF downloaded");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF.");
@@ -403,6 +406,10 @@ export default function Home() {
       const dateOrder = a.date.localeCompare(b.date);
       return transactionSort === "date-asc" ? dateOrder : -dateOrder;
     }), [expenses, transactionRange, transactionSort]);
+  const reportTransactionCount = typeof window === "undefined" || !wallet ? 0 : (Object.keys(CURRENCIES) as Currency[])
+    .flatMap((code) => readStoredAccount(wallet, code).expenses)
+    .filter((expense) => (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
+    .length;
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -523,7 +530,7 @@ export default function Home() {
                 <label>Show<select aria-label="Transaction period" value={transactionRange} onChange={(event) => setTransactionRange(event.target.value as DateRange)}><option value="1">Last 1 day</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="all">All transactions</option></select></label>
                 <label>Sort by<select aria-label="Transaction order" value={transactionSort} onChange={(event) => setTransactionSort(event.target.value as TransactionSort)}><option value="date-desc">Newest date</option><option value="date-asc">Oldest date</option><option value="amount-desc">Largest amount</option></select></label>
               </div>
-              <div className="report-controls"><select aria-label="Reimbursement report period" value={reportRange} onChange={(event) => setReportRange(event.target.value as DateRange)}><option value="1">PDF, last 1 day</option><option value="7">PDF, last 7 days</option><option value="30">PDF, last 30 days</option><option value="all">PDF, all transactions</option></select><button className="secondary" disabled={busy} onClick={downloadReimbursementReport}><Download size={16} />Download PDF</button></div>
+              <button className="secondary" disabled={busy} onClick={() => setReportOpen(true)}><Download size={16} />Download reimbursement PDF</button>
             </div>
             {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
@@ -560,6 +567,21 @@ export default function Home() {
             finally { setBusy(false); }
           }}>Remove Budget</button>}
         </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+      <DialogContent>
+        <DialogTitle>Download reimbursement report</DialogTitle>
+        <DialogDescription>Choose which AI-approved transactions should be included. The report checks all four currency accounts connected to this wallet.</DialogDescription>
+        <div className="report-range-list">
+          {(["1", "7", "30", "all"] as DateRange[]).map((range) => {
+            const label = range === "all" ? "All transactions" : `Last ${range} day${range === "1" ? "" : "s"}`;
+            return <button type="button" key={range} className={`report-range-option ${reportRange === range ? "selected" : ""}`} onClick={() => setReportRange(range)}><span><strong>{label}</strong><small>{range === "all" ? "Every approved receipt from this wallet" : `Approved receipts dated within the ${label.toLowerCase()}`}</small></span>{reportRange === range && <CheckCircle2 size={19} />}</button>;
+          })}
+        </div>
+        <div className="report-summary"><span>Transactions included</span><strong>{reportTransactionCount}</strong></div>
+        <div className="dialog-actions"><button type="button" className="secondary" onClick={() => setReportOpen(false)}>Cancel</button><button type="button" className="primary" disabled={busy || reportTransactionCount === 0} onClick={downloadReimbursementReport}><Download size={16} />{busy ? "Generating PDF…" : "Download PDF"}</button></div>
       </DialogContent>
     </Dialog>
   </>;
