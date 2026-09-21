@@ -56,6 +56,8 @@ type Expense = {
   receipt_file_key?: string | null;
 };
 type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rpc: string; explorer: string };
+type ReportHistoryItem = { id: string; fileName: string; range: string; generatedAt: string; size: number; transactionCount: number; fileKey: string };
+type ReportPreview = ReportHistoryItem & { blob: Blob; url: string };
 
 const categories = ["Food & drinks", "Groceries", "Transport", "Shopping", "Other"];
 const today = () => new Date().toLocaleDateString("en-CA");
@@ -89,12 +91,14 @@ function readStoredAccount(wallet: string, currency: Currency): StoredAccount {
 
 const RECEIPT_DB = "spendwise-receipts";
 const RECEIPT_STORE = "receipts";
+const REPORT_STORE = "reports";
 
 function openReceiptDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(RECEIPT_DB, 1);
+    const request = indexedDB.open(RECEIPT_DB, 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(RECEIPT_STORE)) request.result.createObjectStore(RECEIPT_STORE);
+      if (!request.result.objectStoreNames.contains(REPORT_STORE)) request.result.createObjectStore(REPORT_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -121,6 +125,41 @@ async function getReceiptFile(key: string) {
   });
   database.close();
   return file;
+}
+
+async function storeReportFile(key: string, file: Blob) {
+  const database = await openReceiptDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(REPORT_STORE, "readwrite");
+    transaction.objectStore(REPORT_STORE).put(file, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+async function getReportFile(key: string) {
+  const database = await openReceiptDatabase();
+  const file = await new Promise<Blob | undefined>((resolve, reject) => {
+    const request = database.transaction(REPORT_STORE, "readonly").objectStore(REPORT_STORE).get(key);
+    request.onsuccess = () => resolve(request.result as Blob | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return file;
+}
+
+function reportHistoryKey(wallet: string) {
+  return `spendwise:report-history:${wallet.toLowerCase()}`;
+}
+
+function readReportHistory(wallet: string): ReportHistoryItem[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(reportHistoryKey(wallet)) || "[]") as ReportHistoryItem[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function toMinor(value: string, currency: Currency) {
@@ -159,7 +198,6 @@ export default function Home() {
   const [transactionRange, setTransactionRange] = useState<DateRange>("all");
   const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
   const [reportRange, setReportRange] = useState<DateRange>("all");
-  const [reportOpen, setReportOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -176,6 +214,10 @@ export default function Home() {
   const [transactionPage, setTransactionPage] = useState(1);
   const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
   const [walletOpen, setWalletOpen] = useState(false);
+  const [reportPreview, setReportPreview] = useState<ReportPreview | null>(null);
+  const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationSeenSignature, setNotificationSeenSignature] = useState("");
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -186,6 +228,18 @@ export default function Home() {
       } else setAuth("guest");
     });
   }, []);
+
+  useEffect(() => {
+    if (!wallet) return;
+    queueMicrotask(() => {
+      setReportHistory(readReportHistory(wallet));
+      setNotificationSeenSignature(localStorage.getItem(`spendwise:notification-seen:${wallet.toLowerCase()}`) || "");
+    });
+  }, [wallet]);
+
+  useEffect(() => () => {
+    if (reportPreview?.url) URL.revokeObjectURL(reportPreview.url);
+  }, [reportPreview]);
 
   async function loadAccount(selected: Currency) {
     setLoaded(false);
@@ -378,7 +432,7 @@ export default function Home() {
     }
   }
 
-  async function downloadReimbursementReport() {
+  function getApprovedReportGroups() {
     const approvedByCurrency = (Object.keys(CURRENCIES) as Currency[])
       .map((code) => ({
         currency: code,
@@ -388,45 +442,70 @@ export default function Home() {
       }))
       .filter((group) => group.expenses.length > 0);
 
-    if (!approvedByCurrency.length) return toast.error("No approved transactions are available in this period.");
+    return approvedByCurrency;
+  }
 
-    setBusy(true);
-    try {
-      const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
-      const pdf = new jsPDF({ unit: "mm", format: "a4" });
-      const generatedAt = new Date();
-      const reportId = `SW-${generatedAt.toISOString().replace(/\D/g, "").slice(0, 14)}`;
+  async function buildReimbursementReport(): Promise<ReportPreview> {
+    const approvedByCurrency = getApprovedReportGroups();
 
-      pdf.setFillColor(18, 99, 77);
-      pdf.rect(0, 0, 210, 38, "F");
-      pdf.setTextColor(255, 255, 255);
+    if (!approvedByCurrency.length) throw new Error("No approved transactions are available in this period.");
+
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+    const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    const generatedAt = new Date();
+    const reportId = `SW-${generatedAt.toISOString().replace(/\D/g, "").slice(0, 14)}-${crypto.randomUUID().slice(0, 4)}`;
+    const rangeLabel = reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`;
+    const transactionCount = approvedByCurrency.reduce((sum, group) => sum + group.expenses.length, 0);
+
+    pdf.setFillColor(245, 249, 255);
+    pdf.rect(0, 0, 210, 297, "F");
+    pdf.setTextColor(20, 94, 210);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(18);
+    pdf.text("S SpendWise", 15, 17);
+    pdf.setTextColor(7, 35, 78);
+    pdf.setFontSize(19);
+    pdf.text("Expense Reimbursement Report", 15, 30);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(91, 115, 151);
+    pdf.text("Your expenses. Clearer tomorrow.", 15, 36);
+    pdf.text(`Generated ${generatedAt.toLocaleString("en-GB")}`, 195, 17, { align: "right" });
+    pdf.text(`Report ID ${reportId}`, 195, 22, { align: "right" });
+
+    const summaries = [
+      { label: "APPROVED RECEIPTS", value: String(transactionCount) },
+      { label: "CURRENCY ACCOUNTS", value: String(approvedByCurrency.length) },
+      { label: "DATE RANGE", value: rangeLabel },
+    ];
+    summaries.forEach((item, index) => {
+      const x = 15 + index * 61;
+      pdf.setFillColor(231, 240, 253);
+      pdf.roundedRect(x, 43, 57, 20, 2, 2, "F");
+      pdf.setTextColor(7, 35, 78);
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(22);
-      pdf.text("SpendWise", 15, 17);
-      pdf.setFontSize(13);
-      pdf.text("AI-VERIFIED REIMBURSEMENT REPORT", 15, 27);
-
-      pdf.setTextColor(35, 55, 49);
-      pdf.setFontSize(9);
+      pdf.setFontSize(index === 2 ? 9 : 14);
+      pdf.text(item.value, x + 4, 52);
+      pdf.setTextColor(91, 115, 151);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`Report ID: ${reportId}`, 15, 47);
-      pdf.text(`Generated: ${generatedAt.toLocaleString("en-GB")}`, 15, 53);
-      pdf.text(`Wallet: ${wallet}`, 15, 59);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("Status: ELIGIBLE FOR SUBMISSION", 15, 67);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(90, 105, 100);
-      pdf.text(`Period: ${reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`}`, 15, 73);
-      pdf.text("This report contains only receipts approved by SpendWise AI validation.", 15, 78);
+      pdf.setFontSize(6.5);
+      pdf.text(item.label, x + 4, 59);
+    });
 
-      let y = 87;
+    pdf.setTextColor(7, 35, 78);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7.5);
+    pdf.text(`Submitted by wallet: ${wallet}`, 15, 70);
+    pdf.text("AI validation status: VERIFIED. Eligible for reimbursement submission.", 15, 75);
+
+    let y = 85;
       for (const group of approvedByCurrency) {
         const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
         if (y > 235) {
           pdf.addPage();
           y = 20;
         }
-        pdf.setTextColor(35, 55, 49);
+        pdf.setTextColor(7, 35, 78);
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(12);
         pdf.text(`${group.currency} ACCOUNT`, 15, y);
@@ -444,7 +523,8 @@ export default function Home() {
             expense.tx_hash ? `On-chain\n${expense.tx_hash}` : `AI verified\n${expense.receipt_hash}`,
           ]),
           styles: { fontSize: 7.5, cellPadding: 2.5, overflow: "linebreak" },
-          headStyles: { fillColor: [18, 99, 77], textColor: 255 },
+          headStyles: { fillColor: [20, 94, 210], textColor: 255 },
+          alternateRowStyles: { fillColor: [237, 244, 254] },
           columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 38 }, 2: { cellWidth: 28 }, 3: { cellWidth: 27 }, 4: { cellWidth: 70 } },
           margin: { left: 15, right: 15 },
         });
@@ -452,25 +532,69 @@ export default function Home() {
         y += 12;
       }
 
-      const pages = pdf.getNumberOfPages();
-      for (let page = 1; page <= pages; page += 1) {
-        pdf.setPage(page);
-        pdf.setDrawColor(220, 228, 224);
-        pdf.line(15, 283, 195, 283);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(110, 120, 116);
-        pdf.text("AI validates receipt completeness and authenticity. Final reimbursement remains subject to organization policy.", 15, 288);
-        pdf.text(`Page ${page} of ${pages}`, 195, 288, { align: "right" });
-      }
+    const pages = pdf.getNumberOfPages();
+    for (let page = 1; page <= pages; page += 1) {
+      pdf.setPage(page);
+      pdf.setDrawColor(203, 218, 239);
+      pdf.line(15, 283, 195, 283);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(91, 115, 151);
+      pdf.text("AI validates receipt authenticity. Final reimbursement remains subject to organization policy.", 15, 288);
+      pdf.text(`Page ${page} of ${pages}`, 195, 288, { align: "right" });
+    }
 
-      pdf.save(`SpendWise-Reimbursement-${reportRange === "all" ? "All" : `${reportRange}Days`}-${reportId}.pdf`);
-      setReportOpen(false);
-      toast.success("Reimbursement PDF downloaded");
+    const blob = pdf.output("blob");
+    const fileName = `SpendWise-Reimbursement-${reportRange === "all" ? "All" : `${reportRange}Days`}-${reportId}.pdf`;
+    return { id: reportId, fileName, range: rangeLabel, generatedAt: generatedAt.toISOString(), size: blob.size, transactionCount, fileKey: `${wallet.toLowerCase()}:${reportId}`, blob, url: URL.createObjectURL(blob) };
+  }
+
+  async function generateReportPreview() {
+    setBusy(true);
+    try {
+      const report = await buildReimbursementReport();
+      setReportPreview(report);
+      toast.success("PDF preview generated");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function triggerReportDownload(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function downloadPreviewReport() {
+    if (!reportPreview) return toast.error("Generate a PDF preview first.");
+    try {
+      await storeReportFile(reportPreview.fileKey, reportPreview.blob);
+      const historyItem: ReportHistoryItem = { id: reportPreview.id, fileName: reportPreview.fileName, range: reportPreview.range, generatedAt: reportPreview.generatedAt, size: reportPreview.size, transactionCount: reportPreview.transactionCount, fileKey: reportPreview.fileKey };
+      const next = [historyItem, ...reportHistory.filter((item) => item.id !== historyItem.id)].slice(0, 20);
+      localStorage.setItem(reportHistoryKey(wallet), JSON.stringify(next));
+      setReportHistory(next);
+      triggerReportDownload(reportPreview.blob, reportPreview.fileName);
+      toast.success("Reimbursement PDF downloaded and added to history");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save the report.");
+    }
+  }
+
+  async function downloadHistoryReport(item: ReportHistoryItem) {
+    try {
+      const blob = await getReportFile(item.fileKey);
+      if (!blob) return toast.error("This report file is no longer stored on this device.");
+      triggerReportDownload(blob, item.fileName);
+    } catch {
+      toast.error("Could not open this report file.");
     }
   }
 
@@ -491,10 +615,19 @@ export default function Home() {
   const transactionPageSize = 10;
   const transactionPageCount = Math.max(1, Math.ceil(filteredExpenses.length / transactionPageSize));
   const paginatedExpenses = filteredExpenses.slice((transactionPage - 1) * transactionPageSize, transactionPage * transactionPageSize);
-  const reportTransactionCount = typeof window === "undefined" || !wallet ? 0 : (Object.keys(CURRENCIES) as Currency[])
+  const allWalletExpenses = typeof window === "undefined" || !wallet ? [] : (Object.keys(CURRENCIES) as Currency[])
     .flatMap((code) => readStoredAccount(wallet, code).expenses)
-    .filter((expense) => (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
-    .length;
+    .filter((expense) => expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash));
+  const reportTransactionCount = allWalletExpenses.filter((expense) => isWithinDateRange(expense.date, reportRange)).length;
+  const onChainProofCount = allWalletExpenses.filter((expense) => expense.tx_hash).length;
+  const proofSuccessRate = allWalletExpenses.length ? Math.round(onChainProofCount / allWalletExpenses.length * 100) : 0;
+  const notificationSignature = `${allWalletExpenses.length}:${reportHistory.length}:${onChainProofCount}:${config.contractAddress ? "chain" : "local"}`;
+  const hasUnreadNotifications = notificationSignature !== notificationSeenSignature;
+  const notifications = [
+    reportHistory[0] ? { id: `report-${reportHistory[0].id}`, title: "Report exported", text: reportHistory[0].fileName, tab: "proof" } : null,
+    allWalletExpenses[0] ? { id: `receipt-${allWalletExpenses[0].id}`, title: "Receipt verified", text: `${allWalletExpenses[0].store} is ready for reimbursement.`, tab: "transactions" } : { id: "scan-first", title: "Start your first report", text: "Scan and verify a receipt to create reimbursement proof.", tab: "add" },
+    !config.contractAddress ? { id: "chain-local", title: "Local proof mode", text: "Configure the BOT Chain contract to create on-chain proofs.", tab: "proof" } : null,
+  ].filter(Boolean) as { id: string; title: string; text: string; tab: string }[];
   const overviewExpenses = useMemo(() => [...expenses].filter((expense) => {
     if (overviewRange === "all") return true;
     const start = new Date();
@@ -545,7 +678,14 @@ export default function Home() {
       <div className="header-actions">
         <button className="wallet-btn wallet-card" onClick={() => setWalletOpen(true)} aria-haspopup="dialog"><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
         <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
-        <button className="notification-button" aria-label="Notifications"><Bell size={21} /><i /></button>
+        <button className="notification-button" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={21} />{hasUnreadNotifications && <i />}</button>
+        {notificationsOpen && <aside className="notification-popover">
+          <div className="notification-head"><span><strong>Notifications</strong><small>{hasUnreadNotifications ? "New activity available" : "You are all caught up"}</small></span><button onClick={() => {
+            localStorage.setItem(`spendwise:notification-seen:${wallet.toLowerCase()}`, notificationSignature);
+            setNotificationSeenSignature(notificationSignature);
+          }}>Mark all as read</button></div>
+          <div className="notification-list">{notifications.map((item) => <button key={item.id} onClick={() => { setTab(item.tab); setNotificationsOpen(false); }}><span className="notification-icon"><Bell size={15}/></span><span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowUpRight size={14}/></button>)}</div>
+        </aside>}
       </div>
       <div className="greeting"><Sun /><span><small>{new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}</small><strong>Good morning</strong></span></div>
     </header>
@@ -674,24 +814,29 @@ export default function Home() {
 
         <TabsContent value="proof">
           <div className="proof-metrics">
-            <div className="panel"><ShieldCheck /><span><small>Verified receipts</small><strong>{expenses.length}</strong></span></div>
-            <div className="panel"><ReceiptText /><span><small>Total approved value</small><strong>{fromMinor(expenses.reduce((sum, item) => sum + item.amount, 0), currency)}</strong></span></div>
-            <div className="panel"><TrendingDown /><span><small>On-chain proofs</small><strong>{expenses.filter((item) => item.tx_hash).length}</strong></span></div>
+            <div className="panel"><ReceiptText /><span><small>Generated reports</small><strong>{reportHistory.length}</strong></span></div>
+            <div className="panel"><ShieldCheck /><span><small>Verified receipts</small><strong>{allWalletExpenses.length}</strong></span></div>
+            <div className="panel"><TrendingDown /><span><small>Proof success rate</small><strong>{proofSuccessRate}%</strong></span></div>
           </div>
           <div className="proof-grid">
             <section className="panel report-builder">
               <div className="sectionhead"><div><h2>Generate reimbursement report</h2><p className="muted">Create a PDF from AI-verified expenses across your currency accounts.</p></div><Download /></div>
               <p className="field-title">Select date range</p>
-              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} onClick={() => setReportRange(range)}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
+              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} onClick={() => { setReportRange(range); setReportPreview(null); }}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
               <div className="report-count"><span>Approved transactions included</span><strong>{reportTransactionCount}</strong></div>
-              <button className="primary generate-report" disabled={busy || reportTransactionCount === 0} onClick={downloadReimbursementReport}><Download size={18} />{busy ? "Generating…" : "Generate Report"}<ArrowUpRight size={18} /></button>
+              <div className="report-actions"><button className="primary generate-report" disabled={busy || reportTransactionCount === 0} onClick={generateReportPreview}><Eye size={18} />{busy ? "Building PDF…" : reportPreview ? "Refresh Preview" : "Generate Preview"}<ArrowUpRight size={18} /></button>{reportPreview && <button className="secondary" onClick={downloadPreviewReport}><Download size={17}/>Download PDF</button>}</div>
             </section>
             <section className="panel report-preview">
-              <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">Your reimbursement proof, ready to download.</p></div><Eye /></div>
-              <div className="paper-preview"><span className="paper-logo">S SpendWise</span><h3>Expense Reimbursement Report</h3><p>Your expenses. Clearer tomorrow.</p><div><b>{reportTransactionCount}</b><small>Approved receipts</small></div><div><b>{currency}</b><small>Current account</small></div><div><b>{reportRange === "all" ? "All" : `${reportRange} days`}</b><small>Date range</small></div></div>
+              <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">The preview and downloaded PDF use the exact same file.</p></div><Eye /></div>
+              {reportPreview ? <iframe className="pdf-preview-frame" src={reportPreview.url} title="SpendWise reimbursement PDF preview" /> : <button className="report-preview-empty" disabled={reportTransactionCount === 0} onClick={generateReportPreview}><ReceiptText/><strong>{reportTransactionCount ? "Generate your PDF preview" : "No approved receipts in this period"}</strong><small>{reportTransactionCount ? "Review the complete report before downloading." : "Choose another date range or scan a receipt first."}</small></button>}
             </section>
           </div>
-          <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Local proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <small>Not on-chain</small>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
+          <div className="proof-lower-grid">
+            <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.slice(0, 5).map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Local proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <small>Not on-chain</small>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
+            <section className="panel report-history"><div className="sectionhead"><div><h2>Generated reports history</h2><p className="muted">Reports downloaded from this wallet on this device.</p></div><ReceiptText/></div>
+              {reportHistory.length ? <div className="report-history-list">{reportHistory.map((item) => <div key={item.id} className="report-history-row"><span><ReceiptText/><span><strong>{item.fileName}</strong><small>{item.transactionCount} receipts · {item.range}</small></span></span><time>{new Date(item.generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</time><small>{item.size < 1024 * 1024 ? `${Math.ceil(item.size / 1024)} KB` : `${(item.size / 1024 / 1024).toFixed(1)} MB`}</small><button aria-label={`Download ${item.fileName}`} onClick={() => downloadHistoryReport(item)}><Download/></button></div>)}</div> : <div className="empty-report-history"><ReceiptText/><strong>No exported reports yet</strong><small>Downloaded PDFs will appear here.</small></div>}
+            </section>
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -760,21 +905,6 @@ export default function Home() {
           <button type="button" className="secondary" onClick={() => setWalletOpen(false)}>Stay connected</button>
           <button type="button" className="disconnect-button" onClick={disconnect}><LogOut size={16} />Log out wallet</button>
         </div>
-      </DialogContent>
-    </Dialog>
-
-    <Dialog open={reportOpen} onOpenChange={setReportOpen}>
-      <DialogContent>
-        <DialogTitle>Download reimbursement report</DialogTitle>
-        <DialogDescription>Choose which AI-approved transactions should be included. The report checks all four currency accounts connected to this wallet.</DialogDescription>
-        <div className="report-range-list">
-          {(["1", "7", "30", "all"] as DateRange[]).map((range) => {
-            const label = range === "all" ? "All transactions" : `Last ${range} day${range === "1" ? "" : "s"}`;
-            return <button type="button" key={range} className={`report-range-option ${reportRange === range ? "selected" : ""}`} onClick={() => setReportRange(range)}><span><strong>{label}</strong><small>{range === "all" ? "Every approved receipt from this wallet" : `Approved receipts dated within the ${label.toLowerCase()}`}</small></span>{reportRange === range && <CheckCircle2 size={19} />}</button>;
-          })}
-        </div>
-        <div className="report-summary"><span>Transactions included</span><strong>{reportTransactionCount}</strong></div>
-        <div className="dialog-actions"><button type="button" className="secondary" onClick={() => setReportOpen(false)}>Cancel</button><button type="button" className="primary" disabled={busy || reportTransactionCount === 0} onClick={downloadReimbursementReport}><Download size={16} />{busy ? "Generating PDF…" : "Download PDF"}</button></div>
       </DialogContent>
     </Dialog>
 
