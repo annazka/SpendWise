@@ -5,11 +5,9 @@ import Link from "next/link";
 import {
   ArrowLeftRight,
   ArrowUpRight,
-  Bus,
   Bell,
   CalendarDays,
   CheckCircle2,
-  Coffee,
   Download,
   ExternalLink,
   LogOut,
@@ -18,7 +16,6 @@ import {
   ReceiptText,
   ScanLine,
   ShieldCheck,
-  ShoppingBag,
   Sun,
   TrendingDown,
   Wallet,
@@ -40,6 +37,7 @@ const CURRENCIES = {
 type Currency = keyof typeof CURRENCIES;
 type DateRange = "1" | "7" | "30" | "all";
 type TransactionSort = "date-desc" | "date-asc" | "amount-desc";
+type ChartRange = "1" | "7" | "30" | "90" | "all";
 type Account = { currency: Currency; budget_amount: number | null; budget_start: string | null; budget_end: string | null };
 type Expense = {
   id: string;
@@ -174,6 +172,8 @@ export default function Home() {
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
   const [transactionPage, setTransactionPage] = useState(1);
+  const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
+  const [hoveredChartPoint, setHoveredChartPoint] = useState<number | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -493,9 +493,16 @@ export default function Home() {
     .filter((expense) => (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
     .length;
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: expenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [expenses]);
-  const chartExpenses = [...expenses].sort((a, b) => a.date.localeCompare(b.date)).slice(-12);
+  const chartExpenses = useMemo(() => [...expenses].filter((expense) => {
+    if (overviewRange === "all") return true;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (Number(overviewRange) - 1));
+    return new Date(`${expense.date}T00:00:00`) >= start;
+  }).sort((a, b) => a.date.localeCompare(b.date)).slice(-30), [expenses, overviewRange]);
   const chartMaximum = Math.max(1, ...chartExpenses.map((expense) => expense.amount));
-  const chartPoints = chartExpenses.map((expense, index) => `${index * (100 / Math.max(1, chartExpenses.length - 1))},${95 - (expense.amount / chartMaximum) * 78}`).join(" ");
+  const chartPointData = chartExpenses.map((expense, index) => ({ expense, x: index * (100 / Math.max(1, chartExpenses.length - 1)), y: 95 - (expense.amount / chartMaximum) * 78 }));
+  const chartPoints = chartPointData.map((point) => `${point.x},${point.y}`).join(" ");
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -552,30 +559,30 @@ export default function Home() {
             <section className="budget-card total-spend-card">
               <div className="card-top">
                 <span><Wallet size={20} />TOTAL SPEND</span>
-                <button onClick={() => setBudgetOpen(true)}><CalendarDays size={15} />This Month<ArrowUpRight size={15} /></button>
+                <label className="overview-period"><CalendarDays size={15}/><select aria-label="Overview period" value={overviewRange} onChange={(event) => setOverviewRange(event.target.value as ChartRange)}><option value="1">Today</option><option value="7">Last 7 Days</option><option value="30">This Month</option><option value="90">Last 90 Days</option><option value="all">All Time</option></select></label>
               </div>
               <p className="budget-sub">Total amount spent from approved receipts</p>
               <div className="big-amount">{fromMinor(spent, currency)}</div>
-              <div className="spend-stats"><span><b>{expenses.length}</b><small>Approved Receipts</small></span><span><b>{expenses.length ? fromMinor(spent / expenses.length, currency) : fromMinor(0, currency)}</b><small>Avg. Daily Spend</small></span><span><b>{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</b><small>Remaining Budget</small></span></div>
+              <div className="spend-stats"><span><ReceiptText/><b>{expenses.length}</b><small>Approved Receipts</small></span><span><TrendingDown/><b>{expenses.length ? fromMinor(spent / expenses.length, currency) : fromMinor(0, currency)}</b><small>Avg. Spend</small></span><button onClick={() => setBudgetOpen(true)}><CalendarDays/><b>{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</b><small>Remaining Budget</small></button></div>
             </section>
             <section className="panel spend-trend hero-trend">
-              <div className="sectionhead"><div><h2>Receipt Spend Trend</h2><p className="muted">Daily spending based on scanned receipts</p></div><div className="mini-ranges"><button>1D</button><button>7D</button><button className="active">30D</button><button>All</button></div></div>
-              {chartExpenses.length ? <svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Receipt spending trend"><defs><linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#heroChartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg> : <EmptyTransactions onAdd={() => setTab("add")} />}
+              <div className="sectionhead"><div><h2>Receipt Spend Trend</h2><p className="muted">Daily spending based on scanned receipts</p></div><div className="mini-ranges">{(["1","7","30","90","all"] as ChartRange[]).map(range => <button key={range} className={overviewRange === range ? "active" : ""} onClick={() => setOverviewRange(range)}>{range === "all" ? "All" : `${range}D`}</button>)}</div></div>
+              {chartExpenses.length ? <div className="interactive-chart"><svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Interactive receipt spending trend"><defs><linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#heroChartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/>{chartPointData.map((point,index) => <circle key={point.expense.id} cx={point.x} cy={point.y} r={hoveredChartPoint === index ? 2.2 : 1.25} vectorEffect="non-scaling-stroke" tabIndex={0} onMouseEnter={() => setHoveredChartPoint(index)} onMouseLeave={() => setHoveredChartPoint(null)} onFocus={() => setHoveredChartPoint(index)} onBlur={() => setHoveredChartPoint(null)}/>)}</svg>{hoveredChartPoint != null && chartPointData[hoveredChartPoint] && <div className="chart-tooltip" style={{left:`${Math.min(86,Math.max(4,chartPointData[hoveredChartPoint].x))}%`,top:`${Math.max(4,chartPointData[hoveredChartPoint].y - 8)}%`}}><small>{chartPointData[hoveredChartPoint].expense.date}</small><strong>{fromMinor(chartPointData[hoveredChartPoint].expense.amount,currency)}</strong><span>{chartPointData[hoveredChartPoint].expense.store}</span></div>}</div> : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
           </div>
           <div className="overview-bottom-grid">
             <section className="panel recent-panel">
               <div className="sectionhead"><div><h2>Recent Receipts</h2><p className="muted">Latest receipts you’ve scanned</p></div><button className="text-btn" onClick={() => setTab("transactions")}>View All <ArrowUpRight size={16} /></button></div>
-              {expenses.length ? expenses.slice(0, 5).map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
+              {expenses.length ? expenses.slice(0, 5).map((expense) => <button className="recent-receipt-row" key={expense.id} onClick={() => viewReceipt(expense)}><span className="tx-icon"><ReceiptText/></span><span><strong>{expense.store}</strong><small>{expense.date}</small></span><b>{fromMinor(expense.amount,expense.currency)}</b><i><CheckCircle2/>Verified</i><ArrowUpRight/></button>) : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
             <section className="panel category-panel">
-              <div className="sectionhead"><h2>Category breakdown</h2></div>
-              {categoryTotals.length ? categoryTotals.map((item, index) => <div className="category-row" key={item.name}><span><i style={{ background: ["#27d9ff", "#7c5cff", "#00efcf", "#ffb02e", "#ff5b98"][index % 5] }} />{item.name}</span><div><b style={{ width: `${Math.max(8, item.amount / Math.max(1, spent) * 100)}%` }} /><small>{fromMinor(item.amount, currency)}</small></div></div>) : <p className="muted">Scan receipts to see your category breakdown.</p>}
+              <div className="sectionhead"><div><h2>Category Breakdown</h2><p className="muted">Your spending by category</p></div></div>
+              {categoryTotals.length ? <><div className="category-content"><div className="category-donut" style={{background:`conic-gradient(${categoryTotals.map((item,index) => {const before=categoryTotals.slice(0,index).reduce((sum,current)=>sum+current.amount,0)/Math.max(1,spent)*100;const after=before+item.amount/Math.max(1,spent)*100;return `${["#2794ff","#854cff","#00dfdf","#ffb321","#ff5790"][index%5]} ${before}% ${after}%`;}).join(",")})`}}><span><b>{fromMinor(spent,currency)}</b><small>Total Spend</small></span></div><div className="category-legend">{categoryTotals.map((item,index)=><button key={item.name} onClick={() => {setTransactionRange("all");setTransactionSort("amount-desc");setTab("transactions");}}><i style={{background:["#2794ff","#854cff","#00dfdf","#ffb321","#ff5790"][index%5]}}/><span>{item.name}</span><b>{Math.round(item.amount/Math.max(1,spent)*100)}%</b><small>{fromMinor(item.amount,currency)}</small></button>)}</div></div><button className="category-insight" onClick={() => setTab("transactions")}><Sun/><span><b>{categoryTotals[0].name} is your top category.</b><small>That’s {Math.round(categoryTotals[0].amount/Math.max(1,spent)*100)}% of your total spend.</small></span><ArrowUpRight/></button></> : <p className="muted">Scan receipts to see your category breakdown.</p>}
             </section>
             <section className="panel chain-status-card">
-              <div className="sectionhead"><div><h2>Blockchain Proof Status</h2><p className="muted">Your receipts secured on blockchain</p></div><ShieldCheck /></div>
+              <div className="sectionhead"><div><h2>Blockchain Proof Status</h2><p className="muted">Your receipts secured on blockchain</p></div><button className="text-btn" onClick={() => setTab("proof")}>View All <ArrowUpRight/></button></div>
               <div className="proof-ring" style={{"--proof": `${expenses.length ? Math.round(expenses.filter(item => item.tx_hash).length / expenses.length * 100) : 0}%`} as React.CSSProperties}><span><b>{expenses.length ? Math.round(expenses.filter(item => item.tx_hash).length / expenses.length * 100) : 0}%</b><small>Verified & Stored<br/>On Blockchain</small></span></div>
-              <div className="proof-summary"><span><b>{expenses.length}</b>Total Receipts</span><span><b>{expenses.filter(item => item.tx_hash).length}</b>Verified</span></div>
+              <div className="proof-summary"><span><b>{expenses.length}</b>Total Receipts</span><span><b>{expenses.filter(item => item.tx_hash).length}</b>Verified</span></div><button className="secure-banner" onClick={() => setTab("proof")}><ShieldCheck/><span><b>Your data is secure</b><small>Immutable proof. More peace of mind.</small></span><ArrowUpRight/></button>
             </section>
           </div>
         </TabsContent>
@@ -773,14 +780,4 @@ function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; on
 
 function EmptyTransactions({ onAdd }: { onAdd(): void }) {
   return <div className="empty-state"><ReceiptText size={32} /><h3>No verified receipts in this account yet.</h3><p>Scan your first receipt. Manual expense entry is not available.</p><button className="text-btn" onClick={onAdd}>Scan receipt <ArrowUpRight size={16} /></button></div>;
-}
-
-function Transaction({ expense, config, onViewReceipt }: { expense: Expense; config: Config; onViewReceipt(expense: Expense): void }) {
-  const Icon = expense.category === "Food & drinks" ? Coffee : expense.category === "Transport" ? Bus : ShoppingBag;
-  return <div className="transaction">
-    <span className={`tx-icon ${expense.category === "Food & drinks" ? "orange" : expense.category === "Transport" ? "blue" : "green"}`}><Icon size={20} /></span>
-    <div className="tx-description"><strong>{expense.store}</strong><span>{expense.category} · {expense.date}</span></div>
-    <button className="receipt-view-button" type="button" onClick={() => onViewReceipt(expense)}><Eye size={15} />View scanned receipt</button>
-    <div className="tx-proof">{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer"><CheckCircle2 size={13} />On-chain</a> : <span><CheckCircle2 size={13} />AI verified</span>}<strong>−{fromMinor(expense.amount, expense.currency)}</strong></div>
-  </div>;
 }
