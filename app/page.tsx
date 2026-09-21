@@ -501,7 +501,7 @@ export default function Home() {
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
   if (!currency) return <CurrencyPicker wallet={wallet} onChoose={(selected) => loadAccount(selected).catch((error) => toast.error(error.message))} onDisconnect={disconnect} />;
 
-  return <div className="app-shell">
+  return <div className="app-shell" data-ui-version="transactions-v2">
     <Toaster richColors />
     <aside className="app-sidebar">
       <button className="sidebar-brand" onClick={() => setTab("overview")}><span className="neon-logo">S</span><span><strong>SpendWise</strong><small>Spend smarter.<br />Build a brighter tomorrow.</small></span></button>
