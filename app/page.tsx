@@ -520,6 +520,7 @@ export default function Home() {
   const overviewChange = previousOverviewSpent == null || previousOverviewSpent === 0
     ? null
     : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
+  const overviewPeriodCopy = overviewRange === "1" ? "today" : overviewRange === "all" ? "across all approved receipts" : `in the last ${overviewRange} days`;
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
 
   if (auth === "checking") return <LoadingScreen />;
@@ -576,10 +577,10 @@ export default function Home() {
           <div className="overview-hero-grid">
             <section className="budget-card total-spend-card">
               <div className="card-top">
-                <span><Wallet size={20} />TOTAL SPEND</span>
+                <span><Wallet size={20} />Total Spend</span>
                 <PeriodPicker value={overviewRange} onChange={setOverviewRange} />
               </div>
-              <p className="budget-sub">Total amount spent in the selected period</p>
+              <p className="budget-sub">Total amount spent {overviewPeriodCopy}</p>
               <div className="big-amount">{fromMinor(overviewSpent, currency)}</div>
               <div className={`spend-change ${overviewChange == null ? "neutral" : overviewChange >= 0 ? "up" : "down"}`}><TrendingDown />{overviewChange == null ? "No previous-period data" : `${overviewChange >= 0 ? "+" : ""}${overviewChange}% vs. previous period`}</div>
               <div className="spend-stats"><span><ReceiptText/><b>{overviewExpenses.length}</b><small>Approved Receipts</small></span><span><TrendingDown/><b>{overviewActiveDays ? fromMinor(overviewSpent / overviewActiveDays, currency) : fromMinor(0, currency)}</b><small>Avg. Daily Spend</small></span><button className={`budget-stat ${remaining == null ? "empty" : ""}`} onClick={() => setBudgetOpen(true)}><CalendarDays/><b>{remaining == null ? "Set your budget" : fromMinor(Math.max(0, remaining), currency)}</b><small>{remaining == null ? "Click here to budget your expenses" : "Remaining Budget"}</small>{remaining != null && budget ? <em>{Math.max(0, Math.min(100, Math.round(remaining / budget * 100)))}% left</em> : null}</button></div>
