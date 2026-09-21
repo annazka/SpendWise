@@ -6,6 +6,7 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   Bus,
+  Bell,
   CalendarDays,
   CheckCircle2,
   Coffee,
@@ -16,12 +17,12 @@ import {
   ScanLine,
   ShieldCheck,
   ShoppingBag,
+  Sun,
   TrendingDown,
   Wallet,
   XCircle,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster, toast } from "sonner";
 import { authenticateWallet, recordExpense } from "@/lib/chain";
@@ -458,9 +459,6 @@ export default function Home() {
   }, [account, expenses]);
   const spent = periodExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const remaining = budget == null ? null : budget - spent;
-  const days = account?.budget_end && today() <= account.budget_end
-    ? Math.max(0, Math.round((Date.parse(account.budget_end) - Date.parse(today() < (account.budget_start || "") ? account.budget_start! : today())) / 86_400_000) + 1)
-    : 0;
   const filteredExpenses = useMemo(() => expenses
     .filter((expense) => isWithinDateRange(expense.date, transactionRange))
     .sort((a, b) => {
@@ -497,9 +495,11 @@ export default function Home() {
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
-        <button className="account-switch" onClick={() => setCurrency(null)}><ArrowLeftRight size={15} />{currency} Account</button>
-        <button className="wallet-btn" onClick={disconnect}><Wallet size={17} />{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button>
+        <button className="wallet-btn wallet-card" onClick={disconnect}><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
+        <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
+        <button className="notification-button" aria-label="Notifications"><Bell size={21} /><i /></button>
       </div>
+      <div className="greeting"><Sun /><span><small>{new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}</small><strong>Good morning</strong></span></div>
     </header>
 
     <main className="workspace">
@@ -526,57 +526,34 @@ export default function Home() {
         {!loaded && <p role="status">Loading your {currency} account…</p>}
 
         <TabsContent value="overview">
-          <div className="overview-grid">
-            <section className="budget-card">
+          <div className="overview-hero-grid">
+            <section className="budget-card total-spend-card">
               <div className="card-top">
-                <span>{budget == null ? "OPTIONAL SPENDING LIMIT" : "REMAINING BUDGET"}</span>
-                <button onClick={() => setBudgetOpen(true)}>{budget == null ? "Set a budget" : "Edit budget"}<ArrowUpRight size={15} /></button>
+                <span><Wallet size={20} />TOTAL SPEND</span>
+                <button onClick={() => setBudgetOpen(true)}><CalendarDays size={15} />This Month<ArrowUpRight size={15} /></button>
               </div>
-              <div className="big-amount">{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</div>
-              <p className="budget-sub">{budget == null ? `You can keep recording ${currency} expenses without a budget.` : `of ${fromMinor(budget, currency)} planned`}</p>
-              {budget != null && <>
-                <Progress className="budget-progress" value={Math.min(100, spent / budget * 100)} />
-                <div className="budget-foot"><span>{Math.round(spent / budget * 100)}% spent</span><span>{account?.budget_start} — {account?.budget_end}</span></div>
-              </>}
-              <div className="budget-status">{remaining != null && remaining < 0 ? `You are over budget by ${fromMinor(-remaining, currency)}.` : budget == null ? "Budgeting is optional. Your expense history still works normally." : "A clear limit for this currency account only."}</div>
+              <p className="budget-sub">Total amount spent from approved receipts</p>
+              <div className="big-amount">{fromMinor(spent, currency)}</div>
+              <div className="spend-stats"><span><b>{expenses.length}</b><small>Approved Receipts</small></span><span><b>{expenses.length ? fromMinor(spent / expenses.length, currency) : fromMinor(0, currency)}</b><small>Avg. Daily Spend</small></span><span><b>{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</b><small>Remaining Budget</small></span></div>
             </section>
-            <section className="daily-card">
-              <div className="icon-square"><TrendingDown size={22} /></div>
-              <p className="muted">Daily spending allowance</p>
-              <h2>{remaining == null || !days ? "Not set" : fromMinor(Math.max(0, remaining) / days, currency)}</h2>
-              <p className="muted">{remaining == null ? "Add a budget to calculate a daily allowance." : days ? `Spread your remaining budget across ${days} days.` : "This budget period has ended."}</p>
-              <span className="small-note">A spending guide, not a guarantee.</span>
+            <section className="panel spend-trend hero-trend">
+              <div className="sectionhead"><div><h2>Receipt Spend Trend</h2><p className="muted">Daily spending based on scanned receipts</p></div><div className="mini-ranges"><button>1D</button><button>7D</button><button className="active">30D</button><button>All</button></div></div>
+              {chartExpenses.length ? <svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Receipt spending trend"><defs><linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#heroChartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg> : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
           </div>
-
-          <div className="metrics">
-            <div><ReceiptText /><span>Total recorded<strong>{fromMinor(spent, currency)}</strong></span></div>
-            <div><CalendarDays /><span>Budget status<strong>{budget == null ? "Optional" : `${days} days`}</strong></span></div>
-            <div><ShoppingBag /><span>Transactions<strong>{expenses.length}<small> recorded</small></strong></span></div>
-          </div>
-
-          <div className="analytics-grid">
-            <section className="panel spend-trend">
-              <div className="sectionhead"><div><h2>Receipt spend trend</h2><p className="muted">Spending based on your approved receipts</p></div><span className="status-chip">{expenses.length} receipts</span></div>
-              {chartExpenses.length ? <svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Receipt spending trend"><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#chartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg> : <EmptyTransactions onAdd={() => setTab("add")} />}
+          <div className="overview-bottom-grid">
+            <section className="panel recent-panel">
+              <div className="sectionhead"><div><h2>Recent Receipts</h2><p className="muted">Latest receipts you’ve scanned</p></div><button className="text-btn" onClick={() => setTab("transactions")}>View All <ArrowUpRight size={16} /></button></div>
+              {expenses.length ? expenses.slice(0, 5).map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
             <section className="panel category-panel">
               <div className="sectionhead"><h2>Category breakdown</h2></div>
               {categoryTotals.length ? categoryTotals.map((item, index) => <div className="category-row" key={item.name}><span><i style={{ background: ["#27d9ff", "#7c5cff", "#00efcf", "#ffb02e", "#ff5b98"][index % 5] }} />{item.name}</span><div><b style={{ width: `${Math.max(8, item.amount / Math.max(1, spent) * 100)}%` }} /><small>{fromMinor(item.amount, currency)}</small></div></div>) : <p className="muted">Scan receipts to see your category breakdown.</p>}
             </section>
-          </div>
-
-          <div className="lower-grid">
-            <section className="panel">
-              <div className="sectionhead"><h2>Recent transactions</h2><button className="text-btn" onClick={() => setTab("transactions")}>View all <ArrowUpRight size={16} /></button></div>
-              {expenses.length ? expenses.slice(0, 4).map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : <EmptyTransactions onAdd={() => setTab("add")} />}
-            </section>
-            <section className="scan-card">
-              <span className="icon-square"><ShieldCheck size={25} /></span>
-              <p className="eyebrow">ONE WALLET. FOUR CURRENCIES.</p>
-              <h2>Separate money.<br />Clearer decisions.</h2>
-              <p>Your {currency} budget and expenses never mix with IDR, USD, MYR, or SGD records.</p>
-              <button className="secondary" onClick={() => setCurrency(null)}>Switch currency account <ArrowUpRight size={17} /></button>
+            <section className="panel chain-status-card">
+              <div className="sectionhead"><div><h2>Blockchain Proof Status</h2><p className="muted">Your receipts secured on blockchain</p></div><ShieldCheck /></div>
+              <div className="proof-ring" style={{"--proof": `${expenses.length ? Math.round(expenses.filter(item => item.tx_hash).length / expenses.length * 100) : 0}%`} as React.CSSProperties}><span><b>{expenses.length ? Math.round(expenses.filter(item => item.tx_hash).length / expenses.length * 100) : 0}%</b><small>Verified & Stored<br/>On Blockchain</small></span></div>
+              <div className="proof-summary"><span><b>{expenses.length}</b>Total Receipts</span><span><b>{expenses.filter(item => item.tx_hash).length}</b>Verified</span></div>
             </section>
           </div>
         </TabsContent>
@@ -612,6 +589,11 @@ export default function Home() {
         </TabsContent>
 
         <TabsContent value="transactions">
+          <div className="transaction-metrics">
+            <div className="panel"><Wallet /><span><small>Total Transactions</small><strong>{expenses.length}</strong></span></div>
+            <div className="panel"><ReceiptText /><span><small>Total Approved Value</small><strong>{fromMinor(spent, currency)}</strong></span></div>
+            <div className="panel"><TrendingDown /><span><small>Average Spend</small><strong>{expenses.length ? fromMinor(spent / expenses.length, currency) : fromMinor(0, currency)}</strong></span></div>
+          </div>
           <section className="panel">
             <div className="sectionhead"><h2>{currency} transactions <span className="count">{filteredExpenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div>
             <div className="transaction-toolbar">
