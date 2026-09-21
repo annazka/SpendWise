@@ -654,7 +654,7 @@ export default function Home() {
     : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
   const overviewPeriodCopy = overviewRange === "1" ? "today" : overviewRange === "all" ? "across all approved receipts" : `in the last ${overviewRange} days`;
   const currentHour = currentTime?.getHours() ?? 12;
-  const greetingText = currentHour >= 5 && currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : currentHour < 21 ? "Good evening" : "Good night";
+  const greetingText = currentHour < 12 ? "Good morning" : currentHour < 18 ? "Good afternoon" : "Good evening";
   const currentDateTime = currentTime ? `${currentTime.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })} · ${currentTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Loading local time…";
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
 
