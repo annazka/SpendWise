@@ -472,13 +472,28 @@ export default function Home() {
     .flatMap((code) => readStoredAccount(wallet, code).expenses)
     .filter((expense) => (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
     .length;
+  const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: expenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [expenses]);
+  const chartExpenses = [...expenses].sort((a, b) => a.date.localeCompare(b.date)).slice(-12);
+  const chartMaximum = Math.max(1, ...chartExpenses.map((expense) => expense.amount));
+  const chartPoints = chartExpenses.map((expense, index) => `${index * (100 / Math.max(1, chartExpenses.length - 1))},${95 - (expense.amount / chartMaximum) * 78}`).join(" ");
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
   if (!currency) return <CurrencyPicker wallet={wallet} onChoose={(selected) => loadAccount(selected).catch((error) => toast.error(error.message))} onDisconnect={disconnect} />;
 
-  return <>
+  return <div className="app-shell">
     <Toaster richColors />
+    <aside className="app-sidebar">
+      <button className="sidebar-brand" onClick={() => setTab("overview")}><span className="neon-logo">S</span><span><strong>SpendWise</strong><small>Spend smarter.<br />Build a brighter tomorrow.</small></span></button>
+      <nav>
+        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}><TrendingDown />Overview</button>
+        <button className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}><ScanLine />Scan Receipt</button>
+        <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}><ReceiptText />Transactions</button>
+        <button className={tab === "proof" ? "active" : ""} onClick={() => setTab("proof")}><ShieldCheck />Proof & Reports</button>
+      </nav>
+      <div className="sidebar-foot"><span>v1.0.0</span><small>Built for BOT Chain</small></div>
+    </aside>
+    <div className="app-body">
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
@@ -494,6 +509,7 @@ export default function Home() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="add">Scan Receipt</TabsTrigger>
             <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="proof">Proof & Reports</TabsTrigger>
           </TabsList>
           <span className="currency">{CURRENCIES[currency].name}</span>
         </div>
@@ -501,8 +517,8 @@ export default function Home() {
         <div className="pagehead">
           <div>
             <p className="eyebrow">{currency} CURRENCY ACCOUNT</p>
-            <h1>{tab === "overview" ? "Make room for what matters." : tab === "add" ? "Record what you spent." : "Every expense, in one place."}</h1>
-            <p className="muted">{tab === "overview" ? "Track freely, or add an optional budget when you want a limit." : tab === "add" ? "Every expense must come from an AI-verified receipt." : "Only transactions from this currency account appear here."}</p>
+            <h1>{tab === "overview" ? "Overview" : tab === "add" ? "Scan Receipt" : tab === "transactions" ? "Transactions" : "Proof & Reports"}</h1>
+            <p className="muted">{tab === "overview" ? "Your expenses. Clearer tomorrow." : tab === "add" ? "Upload a receipt and let AI extract the details for you." : tab === "transactions" ? "Review your approved receipt records." : "Generate reimbursement proof. Backed by blockchain. Built for trust."}</p>
           </div>
           {tab === "overview" && <button className="primary" onClick={() => setTab("add")}><ScanLine size={18} />Scan receipt</button>}
         </div>
@@ -537,6 +553,17 @@ export default function Home() {
             <div><ReceiptText /><span>Total recorded<strong>{fromMinor(spent, currency)}</strong></span></div>
             <div><CalendarDays /><span>Budget status<strong>{budget == null ? "Optional" : `${days} days`}</strong></span></div>
             <div><ShoppingBag /><span>Transactions<strong>{expenses.length}<small> recorded</small></strong></span></div>
+          </div>
+
+          <div className="analytics-grid">
+            <section className="panel spend-trend">
+              <div className="sectionhead"><div><h2>Receipt spend trend</h2><p className="muted">Spending based on your approved receipts</p></div><span className="status-chip">{expenses.length} receipts</span></div>
+              {chartExpenses.length ? <svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Receipt spending trend"><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#chartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg> : <EmptyTransactions onAdd={() => setTab("add")} />}
+            </section>
+            <section className="panel category-panel">
+              <div className="sectionhead"><h2>Category breakdown</h2></div>
+              {categoryTotals.length ? categoryTotals.map((item, index) => <div className="category-row" key={item.name}><span><i style={{ background: ["#27d9ff", "#7c5cff", "#00efcf", "#ffb02e", "#ff5b98"][index % 5] }} />{item.name}</span><div><b style={{ width: `${Math.max(8, item.amount / Math.max(1, spent) * 100)}%` }} /><small>{fromMinor(item.amount, currency)}</small></div></div>) : <p className="muted">Scan receipts to see your category breakdown.</p>}
+            </section>
           </div>
 
           <div className="lower-grid">
@@ -597,10 +624,33 @@ export default function Home() {
             {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
           </section>
         </TabsContent>
+
+        <TabsContent value="proof">
+          <div className="proof-metrics">
+            <div className="panel"><ShieldCheck /><span><small>Verified receipts</small><strong>{expenses.length}</strong></span></div>
+            <div className="panel"><ReceiptText /><span><small>Total approved value</small><strong>{fromMinor(expenses.reduce((sum, item) => sum + item.amount, 0), currency)}</strong></span></div>
+            <div className="panel"><TrendingDown /><span><small>On-chain proofs</small><strong>{expenses.filter((item) => item.tx_hash).length}</strong></span></div>
+          </div>
+          <div className="proof-grid">
+            <section className="panel report-builder">
+              <div className="sectionhead"><div><h2>Generate reimbursement report</h2><p className="muted">Create a PDF from AI-verified expenses across your currency accounts.</p></div><Download /></div>
+              <p className="field-title">Select date range</p>
+              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} onClick={() => setReportRange(range)}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
+              <div className="report-count"><span>Approved transactions included</span><strong>{reportTransactionCount}</strong></div>
+              <button className="primary generate-report" disabled={busy || reportTransactionCount === 0} onClick={downloadReimbursementReport}><Download size={18} />{busy ? "Generating…" : "Generate Report"}<ArrowUpRight size={18} /></button>
+            </section>
+            <section className="panel report-preview">
+              <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">Your reimbursement proof, ready to download.</p></div><Eye /></div>
+              <div className="paper-preview"><span className="paper-logo">S SpendWise</span><h3>Expense Reimbursement Report</h3><p>Your expenses. Clearer tomorrow.</p><div><b>{reportTransactionCount}</b><small>Approved receipts</small></div><div><b>{currency}</b><small>Current account</small></div><div><b>{reportRange === "all" ? "All" : `${reportRange} days`}</b><small>Date range</small></div></div>
+            </section>
+          </div>
+          <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Local proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <small>Not on-chain</small>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
+        </TabsContent>
       </Tabs>
 
       <footer><span>SpendWise <span className="muted">· One wallet, four currency accounts.</span></span><div><a href="https://botchain.ai" target="_blank" rel="noreferrer">Built for BOT Chain</a><a href="https://scan.botchain.ai" target="_blank" rel="noreferrer">Explorer ↗</a></div></footer>
     </main>
+    </div>
 
     <Dialog open={budgetOpen} onOpenChange={setBudgetOpen}>
       <DialogContent>
@@ -660,7 +710,7 @@ export default function Home() {
         {receiptViewer && <a className="secondary receipt-file-link" href={receiptViewer.url} target="_blank" rel="noreferrer">Open original file <ArrowUpRight size={16} /></a>}
       </DialogContent>
     </Dialog>
-  </>;
+  </div>;
 }
 
 function LoadingScreen() {
