@@ -11,7 +11,7 @@ export function PeriodPicker({ value, onChange }: { value: Period; onChange(valu
     <select aria-label="Total spend date range" value={value} onChange={(event) => onChange(event.target.value as Period)}>
       {periods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
     </select>
-    <i aria-hidden="true">⌄</i>
+    <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4" /></svg>
   </label>;
 }
 
