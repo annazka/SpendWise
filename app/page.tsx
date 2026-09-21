@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   Coffee,
   Download,
+  ExternalLink,
   LogOut,
+  MoreHorizontal,
   Eye,
   ReceiptText,
   ScanLine,
@@ -21,6 +23,7 @@ import {
   TrendingDown,
   Wallet,
   XCircle,
+  X,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -168,6 +171,9 @@ export default function Home() {
   const [providerDocumentId, setProviderDocumentId] = useState<string | null>(null);
   const [scannedReceipt, setScannedReceipt] = useState<File | null>(null);
   const [receiptViewer, setReceiptViewer] = useState<{ url: string; type: string } | null>(null);
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
+  const [transactionPage, setTransactionPage] = useState(1);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -356,6 +362,19 @@ export default function Home() {
     }
   }
 
+  async function openTransactionDetails(expense: Expense) {
+    setSelectedExpense(expense);
+    if (detailReceipt?.url) URL.revokeObjectURL(detailReceipt.url);
+    setDetailReceipt(null);
+    if (!expense.receipt_file_key) return;
+    try {
+      const file = await getReceiptFile(expense.receipt_file_key);
+      if (file) setDetailReceipt({ url: URL.createObjectURL(file), type: file.type });
+    } catch {
+      toast.error("Could not load the original receipt preview.");
+    }
+  }
+
   async function downloadReimbursementReport() {
     const approvedByCurrency = (Object.keys(CURRENCIES) as Currency[])
       .map((code) => ({
@@ -466,6 +485,9 @@ export default function Home() {
       const dateOrder = a.date.localeCompare(b.date);
       return transactionSort === "date-asc" ? dateOrder : -dateOrder;
     }), [expenses, transactionRange, transactionSort]);
+  const transactionPageSize = 10;
+  const transactionPageCount = Math.max(1, Math.ceil(filteredExpenses.length / transactionPageSize));
+  const paginatedExpenses = filteredExpenses.slice((transactionPage - 1) * transactionPageSize, transactionPage * transactionPageSize);
   const reportTransactionCount = typeof window === "undefined" || !wallet ? 0 : (Object.keys(CURRENCIES) as Currency[])
     .flatMap((code) => readStoredAccount(wallet, code).expenses)
     .filter((expense) => (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
@@ -486,7 +508,7 @@ export default function Home() {
       <nav>
         <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}><TrendingDown />Overview</button>
         <button className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}><ScanLine />Scan Receipt</button>
-        <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}><ReceiptText />Transactions</button>
+        <button className={tab === "transactions" ? "active" : ""} onClick={() => { setTab("transactions"); if (expenses[0]) openTransactionDetails(expenses[0]); }}><ReceiptText />Transactions</button>
         <button className={tab === "proof" ? "active" : ""} onClick={() => setTab("proof")}><ShieldCheck />Proof & Reports</button>
       </nav>
       <div className="sidebar-foot"><span>v1.0.0</span><small>Built for BOT Chain</small></div>
@@ -594,17 +616,33 @@ export default function Home() {
             <div className="panel"><ReceiptText /><span><small>Total Approved Value</small><strong>{fromMinor(spent, currency)}</strong></span></div>
             <div className="panel"><TrendingDown /><span><small>Average Spend</small><strong>{expenses.length ? fromMinor(spent / expenses.length, currency) : fromMinor(0, currency)}</strong></span></div>
           </div>
-          <section className="panel">
-            <div className="sectionhead"><h2>{currency} transactions <span className="count">{filteredExpenses.length}</span></h2><button className="secondary" onClick={() => setTab("add")}><ScanLine size={16} />Scan receipt</button></div>
-            <div className="transaction-toolbar">
-              <div className="filter-group">
-                <label>Show<select aria-label="Transaction period" value={transactionRange} onChange={(event) => setTransactionRange(event.target.value as DateRange)}><option value="1">Last 1 day</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="all">All transactions</option></select></label>
-                <label>Sort by<select aria-label="Transaction order" value={transactionSort} onChange={(event) => setTransactionSort(event.target.value as TransactionSort)}><option value="date-desc">Newest date</option><option value="date-asc">Oldest date</option><option value="amount-desc">Largest amount</option></select></label>
+          <div className={`transactions-layout ${selectedExpense ? "with-detail" : ""}`}>
+            <section className="transaction-main">
+              <div className="transaction-toolbar reference-toolbar">
+                <div className="filter-group"><span>Sort by</span><label><select aria-label="Transaction order" value={transactionSort} onChange={(event) => { setTransactionSort(event.target.value as TransactionSort); setTransactionPage(1); }}><option value="date-desc">Date, Newest</option><option value="date-asc">Date, Oldest</option><option value="amount-desc">Amount, Largest</option></select></label></div>
+                <div className="range-pills">{(["1","7","30","all"] as DateRange[]).map(range => <button key={range} className={transactionRange === range ? "active" : ""} onClick={() => { setTransactionRange(range); setTransactionPage(1); }}>{range === "all" ? "All Time" : `${range}D`}</button>)}</div>
+                <span className="approved-filter"><ShieldCheck size={16}/>Approved</span>
               </div>
-              <button className="secondary" disabled={busy} onClick={() => setReportOpen(true)}><Download size={16} />Download reimbursement PDF</button>
-            </div>
-            {filteredExpenses.length ? filteredExpenses.map((expense) => <Transaction key={expense.id} expense={expense} config={config} onViewReceipt={viewReceipt} />) : expenses.length ? <div className="empty-state"><CalendarDays size={32} /><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
-          </section>
+              <div className="transaction-table panel">
+                <div className="transaction-table-head"><span>Merchant</span><span>Date</span><span>Amount</span><span>Category</span><span>Status</span><span>Blockchain Proof</span><span>Actions</span></div>
+                {paginatedExpenses.length ? paginatedExpenses.map((expense) => <div className={`transaction-table-row ${selectedExpense?.id === expense.id ? "selected" : ""}`} key={expense.id} onClick={() => openTransactionDetails(expense)}>
+                  <span className="merchant-cell"><span className="tx-icon"><ReceiptText size={18}/></span><b>{expense.store}</b></span>
+                  <span>{expense.date}</span><strong>{fromMinor(expense.amount, expense.currency)}</strong><span>{expense.category}</span><span><i className="verified-dot"/>Verified</span>
+                  <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <small>Local proof</small>}</span>
+                  <button aria-label={`View ${expense.store} details`} onClick={(event) => { event.stopPropagation(); openTransactionDetails(expense); }}><MoreHorizontal/></button>
+                </div>) : expenses.length ? <div className="empty-state"><CalendarDays size={32}/><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")}/>}
+                {filteredExpenses.length > 0 && <div className="table-pagination"><span>Showing {(transactionPage - 1) * transactionPageSize + 1}–{Math.min(transactionPage * transactionPageSize, filteredExpenses.length)} of {filteredExpenses.length} transactions</span><div><button disabled={transactionPage === 1} onClick={() => setTransactionPage(page => page - 1)}>‹</button>{Array.from({length: transactionPageCount}, (_, index) => <button key={index} className={transactionPage === index + 1 ? "active" : ""} onClick={() => setTransactionPage(index + 1)}>{index + 1}</button>)}<button disabled={transactionPage === transactionPageCount} onClick={() => setTransactionPage(page => page + 1)}>›</button></div></div>}
+              </div>
+            </section>
+            {selectedExpense && <aside className="transaction-detail panel">
+              <div className="detail-head"><h2><ExternalLink size={18}/>Transaction Details</h2><button onClick={() => { setSelectedExpense(null); if (detailReceipt?.url) URL.revokeObjectURL(detailReceipt.url); setDetailReceipt(null); }}><X/></button></div>
+              <div className="detail-merchant"><span className="tx-icon"><ReceiptText/></span><div><strong>{selectedExpense.store}</strong><small>{selectedExpense.category}</small></div><span className="status-chip"><CheckCircle2 size={13}/>Verified</span></div>
+              <h3>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</h3><p className="muted">{selectedExpense.date}</p>
+              <button className="detail-receipt" onClick={() => viewReceipt(selectedExpense)}>{detailReceipt?.type === "application/pdf" ? <iframe src={detailReceipt.url} title="Receipt preview"/> : detailReceipt ? <img src={detailReceipt.url} alt="Original receipt"/> : <span><ReceiptText size={40}/>Original receipt unavailable</span>}<Eye size={18}/></button>
+              <h3 className="detail-section-title">Extracted Information</h3><dl><div><dt>Merchant</dt><dd>{selectedExpense.store}</dd></div><div><dt>Date</dt><dd>{selectedExpense.date}</dd></div><div><dt>Amount</dt><dd>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</dd></div><div><dt>Category</dt><dd>{selectedExpense.category}</dd></div><div><dt>Receipt Hash</dt><dd>{selectedExpense.receipt_hash.slice(0,12)}…</dd></div></dl>
+              <div className="detail-proof"><div><h3>Blockchain Proof</h3>{selectedExpense.tx_hash && <a href={`${config.explorer}/tx/${selectedExpense.tx_hash}`} target="_blank" rel="noreferrer">View on Explorer <ExternalLink size={14}/></a>}</div><p><ShieldCheck/><span><strong>{selectedExpense.tx_hash ? "Verified & Stored on Blockchain" : "AI Verified Receipt"}</strong><small>{selectedExpense.tx_hash ? "Immutable transaction proof" : "Stored locally on this device"}</small></span></p></div>
+            </aside>}
+          </div>
         </TabsContent>
 
         <TabsContent value="proof">
