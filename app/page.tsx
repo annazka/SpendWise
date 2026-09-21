@@ -730,19 +730,31 @@ export default function Home() {
 
     <Dialog open={walletOpen} onOpenChange={setWalletOpen}>
       <DialogContent className="wallet-dialog">
-        <div className="wallet-dialog-icon"><Wallet /></div>
-        <DialogTitle>Wallet information</DialogTitle>
-        <DialogDescription>Review your connected wallet before choosing to disconnect.</DialogDescription>
-        <div className="wallet-information">
-          <div><span>Connection</span><strong><i />Connected</strong></div>
-          <div><span>Wallet address</span><code>{wallet}</code></div>
-          <div><span>Network</span><strong>BOT Chain, ID {config.chainId}</strong></div>
-          <div><span>Currency account</span><strong>{currency}, {CURRENCIES[currency].name}</strong></div>
+        <div className="wallet-dialog-head">
+          <div className="wallet-dialog-icon"><Wallet /></div>
+          <div>
+            <DialogTitle>Wallet information</DialogTitle>
+            <DialogDescription>Manage your active SpendWise session.</DialogDescription>
+          </div>
+          <span className="wallet-connected"><i />Connected</span>
         </div>
+
+        <div className="wallet-address-card">
+          <span>Connected address</span>
+          <code>{wallet}</code>
+        </div>
+
+        <div className="wallet-detail-grid">
+          <div><span>Network</span><strong>BOT Chain</strong><small>Chain ID {config.chainId}</small></div>
+          <div><span>Active account</span><strong>{currency}</strong><small>{CURRENCIES[currency].name}</small></div>
+        </div>
+
         <div className="wallet-dialog-actions">
           <button type="button" className="secondary" onClick={async () => { await navigator.clipboard.writeText(wallet); toast.success("Wallet address copied"); }}><Copy size={16} />Copy address</button>
           <a className="secondary" href={`${config.explorer}/address/${wallet}`} target="_blank" rel="noreferrer">View explorer <ExternalLink size={16} /></a>
         </div>
+
+        <p className="wallet-logout-note"><ShieldCheck size={16} />Logging out only removes this wallet session from SpendWise. Your blockchain records remain safe.</p>
         <div className="wallet-disconnect-actions">
           <button type="button" className="secondary" onClick={() => setWalletOpen(false)}>Stay connected</button>
           <button type="button" className="disconnect-button" onClick={disconnect}><LogOut size={16} />Log out wallet</button>
