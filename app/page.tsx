@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { PeriodPicker, SpendingChart } from "@/components/overview-controls";
 import {
   ArrowLeftRight,
   ArrowUpRight,
@@ -173,7 +174,6 @@ export default function Home() {
   const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
   const [transactionPage, setTransactionPage] = useState(1);
   const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
-  const [hoveredChartPoint, setHoveredChartPoint] = useState<number | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -501,10 +501,6 @@ export default function Home() {
   }), [expenses, overviewRange]);
   const overviewSpent = overviewExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
-  const chartExpenses = useMemo(() => [...overviewExpenses].sort((a, b) => a.date.localeCompare(b.date)).slice(-30), [overviewExpenses]);
-  const chartMaximum = Math.max(1, ...chartExpenses.map((expense) => expense.amount));
-  const chartPointData = chartExpenses.map((expense, index) => ({ expense, x: index * (100 / Math.max(1, chartExpenses.length - 1)), y: 95 - (expense.amount / chartMaximum) * 78 }));
-  const chartPoints = chartPointData.map((point) => `${point.x},${point.y}`).join(" ");
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -561,7 +557,7 @@ export default function Home() {
             <section className="budget-card total-spend-card">
               <div className="card-top">
                 <span><Wallet size={20} />TOTAL SPEND</span>
-                <label className="overview-period"><CalendarDays size={15}/><select aria-label="Overview period" value={overviewRange} onChange={(event) => setOverviewRange(event.target.value as ChartRange)}><option value="1">Today</option><option value="7">Last 7 Days</option><option value="30">This Month</option><option value="90">Last 90 Days</option><option value="all">All Time</option></select></label>
+                <PeriodPicker value={overviewRange} onChange={setOverviewRange} />
               </div>
               <p className="budget-sub">Total amount spent in the selected period</p>
               <div className="big-amount">{fromMinor(overviewSpent, currency)}</div>
@@ -569,7 +565,7 @@ export default function Home() {
             </section>
             <section className="panel spend-trend hero-trend">
               <div className="sectionhead"><div><h2>Receipt Spend Trend</h2><p className="muted">Daily spending based on scanned receipts</p></div><div className="mini-ranges">{(["1","7","30","90","all"] as ChartRange[]).map(range => <button key={range} className={overviewRange === range ? "active" : ""} onClick={() => setOverviewRange(range)}>{range === "all" ? "All" : `${range}D`}</button>)}</div></div>
-              {chartExpenses.length ? <div className="chart-frame"><div className="chart-y-axis"><span>{fromMinor(chartMaximum,currency)}</span><span>{fromMinor(chartMaximum*.75,currency)}</span><span>{fromMinor(chartMaximum*.5,currency)}</span><span>{fromMinor(chartMaximum*.25,currency)}</span><span>{fromMinor(0,currency)}</span></div><div className="interactive-chart"><svg className="trend-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Interactive receipt spending trend"><defs><linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#30d9ff" stopOpacity=".55"/><stop offset="1" stopColor="#2c78ff" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${chartPoints} 100,100`} fill="url(#heroChartFill)"/><polyline points={chartPoints} fill="none" stroke="#42ddff" strokeWidth="2" vectorEffect="non-scaling-stroke"/>{chartPointData.map((point,index) => <circle key={point.expense.id} cx={point.x} cy={point.y} r={hoveredChartPoint === index ? 2.2 : 1.25} vectorEffect="non-scaling-stroke" tabIndex={0} onMouseEnter={() => setHoveredChartPoint(index)} onMouseLeave={() => setHoveredChartPoint(null)} onFocus={() => setHoveredChartPoint(index)} onBlur={() => setHoveredChartPoint(null)}/>)}</svg><div className="chart-x-axis"><span>{chartExpenses[0]?.date}</span><span>{chartExpenses[Math.floor((chartExpenses.length-1)/2)]?.date}</span><span>{chartExpenses.at(-1)?.date}</span></div>{hoveredChartPoint != null && chartPointData[hoveredChartPoint] && <div className="chart-tooltip" style={{left:`${Math.min(86,Math.max(4,chartPointData[hoveredChartPoint].x))}%`,top:`${Math.max(4,chartPointData[hoveredChartPoint].y - 8)}%`}}><small>{chartPointData[hoveredChartPoint].expense.date}</small><strong>{fromMinor(chartPointData[hoveredChartPoint].expense.amount,currency)}</strong><span>{chartPointData[hoveredChartPoint].expense.store}</span></div>}</div></div> : <EmptyTransactions onAdd={() => setTab("add")} />}
+              {overviewExpenses.length ? <SpendingChart key={overviewRange + currency} expenses={overviewExpenses} format={value => fromMinor(value, currency)} /> : <EmptyTransactions onAdd={() => setTab("add")} />}
             </section>
           </div>
           <div className="overview-bottom-grid">
