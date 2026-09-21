@@ -9,6 +9,7 @@ import {
   Bell,
   CalendarDays,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   LogOut,
@@ -174,6 +175,7 @@ export default function Home() {
   const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
   const [transactionPage, setTransactionPage] = useState(1);
   const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
+  const [walletOpen, setWalletOpen] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -219,6 +221,7 @@ export default function Home() {
   }
 
   async function disconnect() {
+    setWalletOpen(false);
     localStorage.removeItem("spendwise:connected-wallet");
     setAuth("guest");
     setWallet("");
@@ -500,6 +503,23 @@ export default function Home() {
     return new Date(`${expense.date}T00:00:00`) >= start;
   }), [expenses, overviewRange]);
   const overviewSpent = overviewExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const overviewActiveDays = new Set(overviewExpenses.map((expense) => expense.date)).size;
+  const previousOverviewSpent = useMemo(() => {
+    if (overviewRange === "all") return null;
+    const days = Number(overviewRange);
+    const currentStart = new Date();
+    currentStart.setHours(0, 0, 0, 0);
+    currentStart.setDate(currentStart.getDate() - (days - 1));
+    const previousStart = new Date(currentStart);
+    previousStart.setDate(previousStart.getDate() - days);
+    return expenses.filter((expense) => {
+      const date = new Date(`${expense.date}T00:00:00`);
+      return date >= previousStart && date < currentStart;
+    }).reduce((sum, expense) => sum + expense.amount, 0);
+  }, [expenses, overviewRange]);
+  const overviewChange = previousOverviewSpent == null || previousOverviewSpent === 0
+    ? null
+    : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
 
   if (auth === "checking") return <LoadingScreen />;
@@ -522,7 +542,7 @@ export default function Home() {
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
-        <button className="wallet-btn wallet-card" onClick={disconnect}><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
+        <button className="wallet-btn wallet-card" onClick={() => setWalletOpen(true)} aria-haspopup="dialog"><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
         <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
         <button className="notification-button" aria-label="Notifications"><Bell size={21} /><i /></button>
       </div>
@@ -561,7 +581,8 @@ export default function Home() {
               </div>
               <p className="budget-sub">Total amount spent in the selected period</p>
               <div className="big-amount">{fromMinor(overviewSpent, currency)}</div>
-              <div className="spend-stats"><span><ReceiptText/><b>{overviewExpenses.length}</b><small>Approved Receipts</small></span><span><TrendingDown/><b>{overviewExpenses.length ? fromMinor(overviewSpent / overviewExpenses.length, currency) : fromMinor(0, currency)}</b><small>Avg. Spend</small></span><button onClick={() => setBudgetOpen(true)}><CalendarDays/><b>{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</b><small>Remaining Budget</small></button></div>
+              <div className={`spend-change ${overviewChange == null ? "neutral" : overviewChange >= 0 ? "up" : "down"}`}><TrendingDown />{overviewChange == null ? "No previous-period data" : `${overviewChange >= 0 ? "+" : ""}${overviewChange}% vs. previous period`}</div>
+              <div className="spend-stats"><span><ReceiptText/><b>{overviewExpenses.length}</b><small>Approved Receipts</small></span><span><TrendingDown/><b>{overviewActiveDays ? fromMinor(overviewSpent / overviewActiveDays, currency) : fromMinor(0, currency)}</b><small>Avg. Daily Spend</small></span><button onClick={() => setBudgetOpen(true)}><CalendarDays/><b>{remaining == null ? "No limit" : fromMinor(Math.max(0, remaining), currency)}</b><small>Remaining Budget</small>{remaining != null && budget ? <em>{Math.max(0, Math.min(100, Math.round(remaining / budget * 100)))}% left</em> : null}</button></div>
             </section>
             <section className="panel spend-trend hero-trend">
               <div className="sectionhead"><div><h2>Receipt Spend Trend</h2><p className="muted">Daily spending based on scanned receipts</p></div><div className="mini-ranges">{(["1","7","30","90","all"] as ChartRange[]).map(range => <button key={range} className={overviewRange === range ? "active" : ""} onClick={() => setOverviewRange(range)}>{range === "all" ? "All" : `${range}D`}</button>)}</div></div>
@@ -704,6 +725,28 @@ export default function Home() {
             finally { setBusy(false); }
           }}>Remove Budget</button>}
         </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={walletOpen} onOpenChange={setWalletOpen}>
+      <DialogContent className="wallet-dialog">
+        <div className="wallet-dialog-icon"><Wallet /></div>
+        <DialogTitle>Wallet information</DialogTitle>
+        <DialogDescription>Review your connected wallet before choosing to disconnect.</DialogDescription>
+        <div className="wallet-information">
+          <div><span>Connection</span><strong><i />Connected</strong></div>
+          <div><span>Wallet address</span><code>{wallet}</code></div>
+          <div><span>Network</span><strong>BOT Chain, ID {config.chainId}</strong></div>
+          <div><span>Currency account</span><strong>{currency}, {CURRENCIES[currency].name}</strong></div>
+        </div>
+        <div className="wallet-dialog-actions">
+          <button type="button" className="secondary" onClick={async () => { await navigator.clipboard.writeText(wallet); toast.success("Wallet address copied"); }}><Copy size={16} />Copy address</button>
+          <a className="secondary" href={`${config.explorer}/address/${wallet}`} target="_blank" rel="noreferrer">View explorer <ExternalLink size={16} /></a>
+        </div>
+        <div className="wallet-disconnect-actions">
+          <button type="button" className="secondary" onClick={() => setWalletOpen(false)}>Stay connected</button>
+          <button type="button" className="disconnect-button" onClick={disconnect}><LogOut size={16} />Log out wallet</button>
+        </div>
       </DialogContent>
     </Dialog>
 
