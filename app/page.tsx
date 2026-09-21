@@ -213,6 +213,7 @@ export default function Home() {
   const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
   const [transactionPage, setTransactionPage] = useState(1);
   const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [walletOpen, setWalletOpen] = useState(false);
   const [reportPreview, setReportPreview] = useState<ReportPreview | null>(null);
   const [reportPreviewLoading, setReportPreviewLoading] = useState(false);
@@ -228,6 +229,13 @@ export default function Home() {
         setAuth("connected");
       } else setAuth("guest");
     });
+  }, []);
+
+  useEffect(() => {
+    const updateClock = () => setCurrentTime(new Date());
+    queueMicrotask(updateClock);
+    const timer = window.setInterval(updateClock, 30_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -645,6 +653,9 @@ export default function Home() {
     ? null
     : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
   const overviewPeriodCopy = overviewRange === "1" ? "today" : overviewRange === "all" ? "across all approved receipts" : `in the last ${overviewRange} days`;
+  const currentHour = currentTime?.getHours() ?? 12;
+  const greetingText = currentHour >= 5 && currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : currentHour < 21 ? "Good evening" : "Good night";
+  const currentDateTime = currentTime ? `${currentTime.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })} · ${currentTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Loading local time…";
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
 
   useEffect(() => {
@@ -711,7 +722,7 @@ export default function Home() {
           <div className="notification-list">{notifications.map((item) => <button key={item.id} onClick={() => { setTab(item.tab); setNotificationsOpen(false); }}><span className="notification-icon"><Bell size={15}/></span><span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowUpRight size={14}/></button>)}</div>
         </aside>}
       </div>
-      <div className="greeting"><Sun /><span><small>{new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}</small><strong>Good morning</strong></span></div>
+      <div className="greeting"><Sun /><span><small>{currentDateTime}</small><strong>{greetingText}</strong></span></div>
     </header>
 
     <main className="workspace">

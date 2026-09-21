@@ -1,20 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Period = "1" | "7" | "30" | "90" | "all";
 const periods: [Period, string][] = [["1", "Today"], ["7", "Last 7 Days"], ["30", "Last 30 Days"], ["90", "Last 90 Days"], ["all", "All Time"]];
 
 export function PeriodPicker({ value, onChange }: { value: Period; onChange(value: Period): void }) {
-  return <details className="period-picker">
-    <summary><span>◷</span>{periods.find(([key]) => key === value)?.[1]}<i>⌄</i></summary>
-    <div className="period-menu">
-      {periods.map(([key, label]) => <button key={key} type="button" aria-pressed={value === key} onClick={event => {
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function closePicker(event: MouseEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeWithKeyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", closePicker);
+    document.addEventListener("keydown", closeWithKeyboard);
+    return () => {
+      document.removeEventListener("mousedown", closePicker);
+      document.removeEventListener("keydown", closeWithKeyboard);
+    };
+  }, []);
+
+  const activeLabel = periods.find(([key]) => key === value)?.[1] ?? "Last 30 Days";
+
+  return <div ref={pickerRef} className={`period-picker ${open ? "open" : ""}`}>
+    <button type="button" className="period-trigger" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}><span>◷</span><b>{activeLabel}</b><i>⌄</i></button>
+    {open && <div className="period-menu" role="listbox" aria-label="Total spend date range">
+      {periods.map(([key, label]) => <button key={key} type="button" role="option" aria-selected={value === key} onClick={() => {
         onChange(key);
-        event.currentTarget.closest("details")?.removeAttribute("open");
+        setOpen(false);
       }}><span>{label}</span>{value === key && <b>✓</b>}</button>)}
-    </div>
-  </details>;
+    </div>}
+  </div>;
 }
 
 export function SpendingChart({ expenses, format }: { expenses: { date: string; amount: number }[]; format(value: number): string }) {
