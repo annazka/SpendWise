@@ -6,12 +6,12 @@ export type Period = "1" | "7" | "30" | "90" | "all";
 const periods: [Period, string][] = [["1", "Today"], ["7", "Last 7 Days"], ["30", "Last 30 Days"], ["90", "Last 90 Days"], ["all", "All Time"]];
 
 export function PeriodPicker({ value, onChange }: { value: Period; onChange(value: Period): void }) {
-  return <details style={{ position: "relative", minWidth: 165, color: "#ffffff", zIndex: 20 }}>
-    <summary style={{ cursor: "pointer", padding: "12px 16px", background: "#103764", border: "1px solid #35baff", borderRadius: 10, fontSize: 14, fontWeight: 700 }}>{periods.find(([key]) => key === value)?.[1]}</summary>
-    <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 190, padding: 6, background: "#081d38", border: "1px solid #35baff", borderRadius: 12, boxShadow: "0 12px 32px #0009" }}>
-      {periods.map(([key, label]) => <button key={key} type="button" aria-pressed={value === key} onClick={event => { onChange(key); event.currentTarget.closest("details")?.removeAttribute("open"); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 12px", borderRadius: 7, color: value === key ? "#00182c" : "#ffffff", background: value === key ? "#51dfff" : "#081d38", fontWeight: 600 }}>{label}</button>)}
-    </div>
-  </details>;
+  return <label className="period-select">
+    <span className="sr-only">Overview period</span>
+    <select aria-label="Overview period" value={value} onChange={event => onChange(event.target.value as Period)}>
+      {periods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+    </select>
+  </label>;
 }
 
 export function SpendingChart({ expenses, format }: { expenses: { date: string; amount: number }[]; format(value: number): string }) {
