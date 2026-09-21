@@ -6,12 +6,15 @@ export type Period = "1" | "7" | "30" | "90" | "all";
 const periods: [Period, string][] = [["1", "Today"], ["7", "Last 7 Days"], ["30", "Last 30 Days"], ["90", "Last 90 Days"], ["all", "All Time"]];
 
 export function PeriodPicker({ value, onChange }: { value: Period; onChange(value: Period): void }) {
-  return <label className="period-select">
-    <span className="sr-only">Overview period</span>
-    <select aria-label="Overview period" value={value} onChange={event => onChange(event.target.value as Period)}>
-      {periods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-    </select>
-  </label>;
+  return <details className="period-picker">
+    <summary><span>◷</span>{periods.find(([key]) => key === value)?.[1]}<i>⌄</i></summary>
+    <div className="period-menu">
+      {periods.map(([key, label]) => <button key={key} type="button" aria-pressed={value === key} onClick={event => {
+        onChange(key);
+        event.currentTarget.closest("details")?.removeAttribute("open");
+      }}><span>{label}</span>{value === key && <b>✓</b>}</button>)}
+    </div>
+  </details>;
 }
 
 export function SpendingChart({ expenses, format }: { expenses: { date: string; amount: number }[]; format(value: number): string }) {
