@@ -215,6 +215,7 @@ export default function Home() {
   const [overviewRange, setOverviewRange] = useState<ChartRange>("30");
   const [walletOpen, setWalletOpen] = useState(false);
   const [reportPreview, setReportPreview] = useState<ReportPreview | null>(null);
+  const [reportPreviewLoading, setReportPreviewLoading] = useState(false);
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationSeenSignature, setNotificationSeenSignature] = useState("");
@@ -549,19 +550,6 @@ export default function Home() {
     return { id: reportId, fileName, range: rangeLabel, generatedAt: generatedAt.toISOString(), size: blob.size, transactionCount, fileKey: `${wallet.toLowerCase()}:${reportId}`, blob, url: URL.createObjectURL(blob) };
   }
 
-  async function generateReportPreview() {
-    setBusy(true);
-    try {
-      const report = await buildReimbursementReport();
-      setReportPreview(report);
-      toast.success("PDF preview generated");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function triggerReportDownload(blob: Blob, fileName: string) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -619,6 +607,9 @@ export default function Home() {
     .flatMap((code) => readStoredAccount(wallet, code).expenses)
     .filter((expense) => expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash));
   const reportTransactionCount = allWalletExpenses.filter((expense) => isWithinDateRange(expense.date, reportRange)).length;
+  const reportDataSignature = allWalletExpenses
+    .map((expense) => `${expense.id}:${expense.date}:${expense.amount}:${expense.receipt_hash ?? ""}:${expense.tx_hash ?? ""}`)
+    .join("|");
   const onChainProofCount = allWalletExpenses.filter((expense) => expense.tx_hash).length;
   const proofSuccessRate = allWalletExpenses.length ? Math.round(onChainProofCount / allWalletExpenses.length * 100) : 0;
   const notificationSignature = `${allWalletExpenses.length}:${reportHistory.length}:${onChainProofCount}:${config.contractAddress ? "chain" : "local"}`;
@@ -655,6 +646,39 @@ export default function Home() {
     : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
   const overviewPeriodCopy = overviewRange === "1" ? "today" : overviewRange === "all" ? "across all approved receipts" : `in the last ${overviewRange} days`;
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (tab !== "proof" || !wallet || reportTransactionCount === 0) {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setReportPreviewLoading(false);
+          setReportPreview(null);
+        }
+      });
+      return () => { cancelled = true; };
+    }
+
+    queueMicrotask(async () => {
+      if (cancelled) return;
+      setReportPreviewLoading(true);
+      try {
+        const report = await buildReimbursementReport();
+        if (cancelled) return URL.revokeObjectURL(report.url);
+        setReportPreview(report);
+      } catch (error) {
+        if (!cancelled) {
+          setReportPreview(null);
+          toast.error(error instanceof Error ? error.message : "Could not generate the reimbursement PDF preview.");
+        }
+      } finally {
+        if (!cancelled) setReportPreviewLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+    // PDF generation intentionally follows the active proof tab, wallet data, and selected range.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, reportRange, reportTransactionCount, reportDataSignature, wallet]);
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -822,13 +846,13 @@ export default function Home() {
             <section className="panel report-builder">
               <div className="sectionhead"><div><h2>Generate reimbursement report</h2><p className="muted">Create a PDF from AI-verified expenses across your currency accounts.</p></div><Download /></div>
               <p className="field-title">Select date range</p>
-              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} onClick={() => { setReportRange(range); setReportPreview(null); }}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
+              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} aria-pressed={reportRange === range} onClick={() => { if (range !== reportRange) { setReportPreviewLoading(true); setReportRange(range); } }}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
               <div className="report-count"><span>Approved transactions included</span><strong>{reportTransactionCount}</strong></div>
-              <div className="report-actions"><button className="primary generate-report" disabled={busy || reportTransactionCount === 0} onClick={generateReportPreview}><Eye size={18} />{busy ? "Building PDF…" : reportPreview ? "Refresh Preview" : "Generate Preview"}<ArrowUpRight size={18} /></button>{reportPreview && <button className="secondary" onClick={downloadPreviewReport}><Download size={17}/>Download PDF</button>}</div>
+              <button className="primary generate-report" disabled={reportPreviewLoading || !reportPreview || reportTransactionCount === 0} onClick={downloadPreviewReport}><Download size={18} />{reportPreviewLoading ? "Preparing PDF…" : "Download PDF"}<ArrowUpRight size={18} /></button>
             </section>
             <section className="panel report-preview">
-              <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">The preview and downloaded PDF use the exact same file.</p></div><Eye /></div>
-              {reportPreview ? <iframe className="pdf-preview-frame" src={reportPreview.url} title="SpendWise reimbursement PDF preview" /> : <button className="report-preview-empty" disabled={reportTransactionCount === 0} onClick={generateReportPreview}><ReceiptText/><strong>{reportTransactionCount ? "Generate your PDF preview" : "No approved receipts in this period"}</strong><small>{reportTransactionCount ? "Review the complete report before downloading." : "Choose another date range or scan a receipt first."}</small></button>}
+              <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">View only. The downloaded PDF uses this exact file.</p></div><Eye /></div>
+              {reportPreviewLoading ? <div className="report-preview-loading" role="status"><span className="preview-spinner"/><strong>Preparing PDF preview</strong><small>Building the report for your selected date range…</small></div> : reportPreview ? <iframe className="pdf-preview-frame" src={`${reportPreview.url}#toolbar=0&navpanes=0&view=FitH`} title="SpendWise reimbursement PDF preview, view only" /> : <div className="report-preview-empty"><ReceiptText/><strong>No approved receipts in this period</strong><small>Choose another date range or scan a receipt first.</small></div>}
             </section>
           </div>
           <div className="proof-lower-grid">
