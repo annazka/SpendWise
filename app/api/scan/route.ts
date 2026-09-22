@@ -10,6 +10,7 @@ type VeryfiDocument = {
   total?: VeryfiField<number>;
   currency_code?: VeryfiField<string>;
   category?: VeryfiField<string>;
+  notes?: VeryfiField<string>;
   document_type?: VeryfiField<string>;
   duplicate_of?: number | null;
   warnings?: string[];
@@ -119,6 +120,7 @@ export async function POST(request: Request) {
       amount,
       currency,
       category: mapCategory(valueOf(data.category ?? null)),
+      notes: valueOf(data.notes ?? null)?.trim().slice(0, 240) || "",
       receiptHash,
       providerDocumentId: data.id ? String(data.id) : null,
       warnings: data.warnings || [],

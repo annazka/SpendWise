@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { PeriodPicker, SpendingChart } from "@/components/overview-controls";
 import {
@@ -13,16 +13,24 @@ import {
   Download,
   ExternalLink,
   LogOut,
+  Maximize2,
   MoreHorizontal,
   Eye,
+  FileText,
+  History,
+  LockKeyhole,
   ReceiptText,
+  RotateCw,
   ScanLine,
   ShieldCheck,
+  Sparkles,
   Sun,
   TrendingDown,
+  UploadCloud,
   Wallet,
   XCircle,
   X,
+  ZoomIn,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,6 +62,7 @@ type Expense = {
   receipt_hash: string;
   provider_document_id: string | null;
   receipt_file_key?: string | null;
+  notes?: string | null;
 };
 type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rpc: string; explorer: string };
 type ReportHistoryItem = { id: string; fileName: string; range: string; generatedAt: string; size: number; transactionCount: number; fileKey: string };
@@ -187,6 +196,11 @@ function isWithinDateRange(date: string, range: DateRange) {
   return !Number.isNaN(transactionDate.getTime()) && transactionDate >= start;
 }
 
+async function hashReceipt(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default function Home() {
   const [auth, setAuth] = useState<"checking" | "guest" | "connected">("checking");
   const [wallet, setWallet] = useState("");
@@ -202,12 +216,21 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [preview, setPreview] = useState("");
-  const [form, setForm] = useState({ store: "", date: today(), amount: "", category: "Other" });
+  const [form, setForm] = useState({ store: "", date: today(), amount: "", category: "Other", notes: "" });
   const [scanStatus, setScanStatus] = useState<"IDLE" | "VALIDATING" | "APPROVED" | "REJECTED">("IDLE");
   const [scanMessage, setScanMessage] = useState("");
   const [receiptHash, setReceiptHash] = useState("");
   const [providerDocumentId, setProviderDocumentId] = useState<string | null>(null);
   const [scannedReceipt, setScannedReceipt] = useState<File | null>(null);
+  const [scanPreviewType, setScanPreviewType] = useState("");
+  const [recentScan, setRecentScan] = useState<Expense | null>(null);
+  const [recentThumbs, setRecentThumbs] = useState<Record<string, string>>({});
+  const [dragOver, setDragOver] = useState(false);
+  const [scanRotation, setScanRotation] = useState(0);
+  const [scanZoom, setScanZoom] = useState(false);
+  const [scanFullscreen, setScanFullscreen] = useState(false);
+  const [scanElapsed, setScanElapsed] = useState<number | null>(null);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
   const [receiptViewer, setReceiptViewer] = useState<{ url: string; type: string } | null>(null);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [detailReceipt, setDetailReceipt] = useState<{ url: string; type: string } | null>(null);
@@ -249,6 +272,24 @@ export default function Home() {
   useEffect(() => () => {
     if (reportPreview?.url) URL.revokeObjectURL(reportPreview.url);
   }, [reportPreview]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const urls: string[] = [];
+    Promise.all(expenses.slice(0, 4).map(async (expense) => {
+      if (!expense.receipt_file_key) return null;
+      try {
+        const file = await getReceiptFile(expense.receipt_file_key);
+        if (!file || !file.type.startsWith("image/")) return null;
+        const url = URL.createObjectURL(file);
+        urls.push(url);
+        return [expense.id, url] as const;
+      } catch { return null; }
+    })).then((entries) => {
+      if (!cancelled) setRecentThumbs(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)));
+    });
+    return () => { cancelled = true; urls.forEach((url) => URL.revokeObjectURL(url)); };
+  }, [expenses]);
 
   async function loadAccount(selected: Currency) {
     setLoaded(false);
@@ -318,37 +359,63 @@ export default function Home() {
         receipt_hash: String(data.receiptHash),
         provider_document_id: typeof data.providerDocumentId === "string" ? data.providerDocumentId : null,
         receipt_file_key: typeof data.receiptFileKey === "string" ? data.receiptFileKey : null,
+        notes: typeof data.notes === "string" ? data.notes : null,
       });
     } else throw new Error("Unsupported save action.");
     localStorage.setItem(storageKey(wallet, currency), JSON.stringify(stored));
   }
 
   async function scan(file: File) {
-    if (!currency) return;
+    if (!currency || busy) return;
+    if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) return toast.error("Use a JPG, PNG, WebP, or PDF receipt.");
     if (file.size > 20 * 1024 * 1024) return toast.error("Choose a receipt smaller than 20 MB.");
+    setBusy(true);
+    try {
+      const fileHash = await hashReceipt(file);
+      const alreadySaved = (Object.keys(CURRENCIES) as Currency[]).some((code) =>
+        readStoredAccount(wallet, code).expenses.some((expense) => expense.receipt_hash?.toLowerCase() === fileHash));
+      if (alreadySaved) {
+        toast.error("This receipt was already saved. Renaming the file does not create a new receipt.");
+        return;
+      }
+    } catch {
+      toast.error("Could not check this receipt for duplicates.");
+      return;
+    } finally {
+      setBusy(false);
+    }
     if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
-    setPreview(file.type === "application/pdf" ? "" : URL.createObjectURL(file));
+    setPreview(URL.createObjectURL(file));
+    setScanPreviewType(file.type);
+    setRecentScan(null);
+    setScanRotation(0);
+    setScanZoom(false);
+    setScanElapsed(null);
     setScanStatus("VALIDATING");
     setScanMessage("AI is checking the receipt authenticity and reading its details.");
     setReceiptHash("");
     setScannedReceipt(file);
     setBusy(true);
+    const scanStarted = performance.now();
     try {
       const body = new FormData();
       body.append("receipt", file);
       body.append("currency", currency);
       const response = await fetch("/api/scan", { method: "POST", body });
-      const data = await response.json() as { status?: "APPROVED" | "REJECTED"; store?: string; date?: string; amount?: number; category?: string; receiptHash?: string; providerDocumentId?: string | null; reasons?: string[]; error?: string };
+      const data = await response.json() as { status?: "APPROVED" | "REJECTED"; store?: string; date?: string; amount?: number; category?: string; notes?: string; receiptHash?: string; providerDocumentId?: string | null; reasons?: string[]; error?: string };
       if (!response.ok || data.status !== "APPROVED") {
         setScanStatus("REJECTED");
         setScanMessage(data.reasons?.join(" ") || data.error || "This receipt could not be verified.");
-        setForm({ store: "", date: today(), amount: "", category: "Other" });
+        setForm({ store: "", date: today(), amount: "", category: "Other", notes: "" });
         setScannedReceipt(null);
         throw new Error(data.reasons?.[0] || data.error || "This receipt could not be verified.");
       }
-      if (expenses.some((expense) => expense.receipt_hash && expense.receipt_hash === data.receiptHash)) {
+      if ((Object.keys(CURRENCIES) as Currency[]).some((code) => readStoredAccount(wallet, code).expenses.some((expense) =>
+        expense.receipt_hash?.toLowerCase() === data.receiptHash?.toLowerCase() ||
+        (data.providerDocumentId && expense.provider_document_id === data.providerDocumentId)))) {
         setScanStatus("REJECTED");
-        setScanMessage("This exact receipt has already been recorded in this currency account.");
+        setScanMessage("This receipt was already saved to this wallet.");
+        setScannedReceipt(null);
         throw new Error("Duplicate receipt detected.");
       }
       setForm({
@@ -356,10 +423,12 @@ export default function Home() {
         date: data.date || today(),
         amount: data.amount == null ? "" : String(data.amount),
         category: categories.includes(data.category || "") ? data.category! : "Other",
+        notes: data.notes?.trim() || "",
       });
       setReceiptHash(data.receiptHash || "");
       setProviderDocumentId(data.providerDocumentId || null);
       setScanStatus("APPROVED");
+      setScanElapsed(Math.max(0.1, (performance.now() - scanStarted) / 1000));
       setScanMessage("Receipt verified. It is eligible for reimbursement submission.");
       toast.success("Approved receipt. Ready to record.");
     } catch (error) {
@@ -373,7 +442,10 @@ export default function Home() {
   async function submitExpense(event: React.FormEvent) {
     event.preventDefault();
     if (!currency) return;
-    if (scanStatus !== "APPROVED" || !receiptHash) return toast.error("Scan and verify a receipt first.");
+    if (recentScan || scanStatus !== "APPROVED" || !receiptHash || !scannedReceipt) return toast.error("Scan and verify a new receipt first.");
+    if ((Object.keys(CURRENCIES) as Currency[]).some((code) => readStoredAccount(wallet, code).expenses.some((expense) =>
+      expense.receipt_hash?.toLowerCase() === receiptHash.toLowerCase() ||
+      (providerDocumentId && expense.provider_document_id === providerDocumentId)))) return toast.error("This receipt was already saved.");
     const amountMinor = toMinor(form.amount, currency);
     if (amountMinor < 1) return toast.error("Enter a valid amount.");
     setBusy(true);
@@ -397,9 +469,12 @@ export default function Home() {
         receiptHash,
         providerDocumentId,
         receiptFileKey,
+        notes: form.notes,
       });
-      setForm({ store: "", date: today(), amount: "", category: "Other" });
+      setForm({ store: "", date: today(), amount: "", category: "Other", notes: "" });
+      if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
       setPreview("");
+      setScanPreviewType("");
       setScanStatus("IDLE");
       setScanMessage("");
       setReceiptHash("");
@@ -414,6 +489,25 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function showRecentScan(expense: Expense) {
+    setRecentScan(expense);
+    setScannedReceipt(null);
+    setScanStatus("IDLE");
+    setScanRotation(0);
+    setScanZoom(false);
+    if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
+    setPreview("");
+    setScanPreviewType("");
+    if (!expense.receipt_file_key) return;
+    try {
+      const file = await getReceiptFile(expense.receipt_file_key);
+      if (file) {
+        setPreview(URL.createObjectURL(file));
+        setScanPreviewType(file.type);
+      }
+    } catch { toast.error("Could not load this receipt on this device."); }
   }
 
   async function viewReceipt(expense: Expense) {
@@ -653,6 +747,9 @@ export default function Home() {
     ? null
     : Math.round((overviewSpent - previousOverviewSpent) / previousOverviewSpent * 100);
   const overviewPeriodCopy = overviewRange === "1" ? "today" : overviewRange === "all" ? "across all approved receipts" : `in the last ${overviewRange} days`;
+  const scanDetails = recentScan
+    ? { store: recentScan.store, date: recentScan.date, amount: fromMinor(recentScan.amount, recentScan.currency), category: recentScan.category, currency: recentScan.currency, notes: recentScan.notes || "No notes detected" }
+    : { store: form.store, date: form.date, amount: form.amount ? fromMinor(toMinor(form.amount, currency || "IDR"), currency || "IDR") : "", category: form.category, currency, notes: form.notes || "No notes detected" };
   const currentHour = currentTime?.getHours() ?? 12;
   const greetingText = currentHour < 12 ? "Good morning" : currentHour < 18 ? "Good afternoon" : "Good evening";
   const currentDateTime = currentTime ? `${currentTime.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })} · ${currentTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Loading local time…";
@@ -783,33 +880,58 @@ export default function Home() {
         </TabsContent>
 
         <TabsContent value="add">
-          <div className="scan-grid">
-            <section className="panel">
-              <h2>Scan a {currency} receipt</h2>
-              <p className="muted">JPG, PNG, WebP, or PDF, up to 20 MB. The receipt currency must match this account.</p>
-              <label className="dropzone">
-                <ScanLine size={44} /><strong>{busy ? "Reading your receipt…" : "Choose a receipt photo"}</strong><span>Use a clear image with the total visible</span>
-                <input aria-label="Upload receipt" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={busy} onChange={(event) => event.target.files?.[0] && scan(event.target.files[0])} />
-              </label>
-              {preview && <img className="receipt-preview" src={preview} alt="Receipt being validated" />}
-              {scanStatus !== "IDLE" && <div className={`validation-card ${scanStatus.toLowerCase()}`}>
-                {scanStatus === "APPROVED" ? <CheckCircle2 size={20} /> : scanStatus === "REJECTED" ? <XCircle size={20} /> : <ScanLine size={20} />}
-                <span><strong>{scanStatus === "APPROVED" ? "APPROVED RECEIPT" : scanStatus}</strong><small>{scanMessage}</small></span>
-              </div>}
-              <p className="small-note">After approval, the original receipt is stored locally on this device so you can view it again from Transactions.</p>
-              {!config.aiEnabled && <p className="notice">AI scanning is awaiting Veryfi setup. Manual expense entry is disabled.</p>}
-            </section>
-            <form className="panel form" onSubmit={submitExpense}>
-              <div><h2>Verified receipt details</h2><p className="muted">Fields are filled by AI and cannot be entered or edited manually.</p></div>
-              <label>Merchant<input readOnly value={form.store} placeholder="Scan a receipt first" /></label>
-              <label>Date<input type="date" readOnly value={form.date} /></label>
-              <label>Amount, {currency}<input readOnly value={form.amount} placeholder="Scan a receipt first" /></label>
-              <label>Category<input readOnly value={form.category} /></label>
-              {receiptHash && <p className="hash-line"><strong>Receipt SHA-256</strong><span>{receiptHash}</span></p>}
-              {!config.contractAddress && <p className="notice">The contract is not configured yet. This expense will be saved locally and marked “Local only”.</p>}
-              <button className="primary" disabled={busy || !loaded || scanStatus !== "APPROVED"}>{busy ? "Please wait…" : config.contractAddress ? "Record Verified Receipt on BOT Chain" : "Save Verified Receipt"}</button>
+          <div className="scan-workspace">
+            <div className="scan-left-column">
+              <section className="panel scan-upload-panel">
+                <div className={`scan-upload-target ${dragOver ? "dragging" : ""}`}
+                  onDragEnter={(event) => { event.preventDefault(); if (!busy) setDragOver(true); }}
+                  onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = busy ? "none" : "copy"; }}
+                  onDragLeave={(event) => { event.preventDefault(); if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false); }}
+                  onDrop={(event) => { event.preventDefault(); setDragOver(false); const file = event.dataTransfer.files[0]; if (file) void scan(file); }}>
+                  <UploadCloud aria-hidden="true" className="scan-upload-icon" />
+                  <strong>{busy && scanStatus === "VALIDATING" ? "AI is scanning your receipt…" : "Drag & drop your receipt here"}</strong>
+                  <span>or choose a file to upload</span>
+                  <input ref={receiptInputRef} className="scan-file-input" aria-label="Upload receipt" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void scan(file); }} />
+                  <button type="button" className="primary scan-choose-file" disabled={busy} onClick={() => receiptInputRef.current?.click()}>Choose File <ArrowUpRight size={19}/></button>
+                  <small>Supports JPG, PNG, WebP, PDF (up to 20 MB)</small>
+                </div>
+              </section>
+              <section className="panel scan-recent-panel">
+                <div className="sectionhead"><div className="scan-section-title"><span className="scan-title-icon"><History /></span><span><h2>Recent Scans</h2><small>Your recently saved receipts</small></span></div><button type="button" className="text-btn" onClick={() => setTab("transactions")}>View All <ArrowUpRight size={16}/></button></div>
+                {expenses.length ? <div className="scan-recent-list">{expenses.slice(0, 4).map((expense) => <button type="button" key={expense.id} className={`scan-recent-item ${recentScan?.id === expense.id ? "selected" : ""}`} onClick={() => void showRecentScan(expense)}>
+                  <span className="scan-recent-thumb">{recentThumbs[expense.id] ? <img src={recentThumbs[expense.id]} alt="" /> : <FileText aria-hidden="true" />}</span>
+                  <strong title={expense.store}>{expense.store}</strong><small>{new Date(`${expense.date}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</small>
+                </button>)}</div> : <div className="scan-recent-empty"><ReceiptText/><span>Saved receipts will appear here after your first scan.</span></div>}
+              </section>
+              <section className="panel scan-preview-panel">
+                <div className="sectionhead"><div className="scan-section-title"><span className="scan-title-icon"><Eye /></span><span><h2>Receipt Preview</h2><small>{recentScan ? "Saved original receipt" : "Your receipt appears here automatically"}</small></span></div>
+                  {preview && <div className="scan-preview-tools">{scanPreviewType !== "application/pdf" && <><button type="button" aria-label="Rotate receipt" title="Rotate receipt" onClick={() => setScanRotation((rotation) => (rotation + 90) % 360)}><RotateCw size={16}/> Rotate</button><button type="button" aria-label="Zoom receipt" title="Zoom receipt" onClick={() => setScanZoom((zoom) => !zoom)}><ZoomIn size={16}/> Zoom</button></>}<button type="button" aria-label="Expand receipt preview" title="Expand receipt preview" onClick={() => setScanFullscreen(true)}><Maximize2 size={16}/></button></div>}
+                </div>
+                <div className={`scan-preview-canvas ${scanZoom ? "zoomed" : ""}`}>
+                  {preview ? scanPreviewType === "application/pdf" ? <iframe src={preview + "#toolbar=0&navpanes=0&view=FitH"} title="Receipt PDF preview" /> : <img src={preview} alt="Scanned receipt preview" style={{ transform: `rotate(${scanRotation}deg) scale(${scanZoom ? 1.6 : 1})` }} /> : <div className="scan-preview-placeholder"><ReceiptText/><strong>No receipt selected</strong><small>Upload a receipt or select a recent scan to see it here.</small></div>}
+                </div>
+              </section>
+            </div>
+            <form className="panel scan-extraction-panel" onSubmit={submitExpense}>
+              <div className="sectionhead"><div className="scan-section-title"><span className="scan-title-icon"><Sparkles /></span><span><h2>AI Extraction</h2><small>{recentScan ? "Saved, AI verified receipt" : "Extracted details from your receipt"}</small></span></div>{(scanStatus === "APPROVED" || recentScan) && <span className="scan-ai-badge"><CheckCircle2 size={15}/> {recentScan ? "AI Verified" : `AI Processed${scanElapsed ? ` in ${scanElapsed.toFixed(1)}s` : ""}`}</span>}</div>
+              {scanStatus === "VALIDATING" && !recentScan && <div className="scan-feedback validating" role="status"><span className="preview-spinner"/><span>AI is verifying your receipt and extracting its details…</span></div>}
+              {scanStatus === "REJECTED" && !recentScan && <div className="scan-feedback rejected" role="alert"><XCircle size={18}/><span>{scanMessage || "This receipt could not be verified."}</span></div>}
+              <div className="scan-detail-list">
+                {([
+                  ["Merchant", scanDetails.store],
+                  ["Date", scanDetails.store || recentScan ? (scanDetails.date ? new Date(`${scanDetails.date}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "") : ""],
+                  ["Amount", scanDetails.amount],
+                  ["Category", scanDetails.store || recentScan ? scanDetails.category : ""],
+                  ["Currency", `${scanDetails.currency} - ${CURRENCIES[scanDetails.currency || currency || "IDR"].name}`],
+                  ["Notes", scanDetails.store || recentScan ? scanDetails.notes : ""],
+                ] as [string, string][]).map(([label, value]) => <div className="scan-detail-row" key={label}><span>{label}</span><strong>{value || "Waiting for AI scan"}{(scanStatus === "APPROVED" || recentScan) && <CheckCircle2 size={17} aria-label="Verified by AI"/>}</strong></div>)}
+              </div>
+              <p className="scan-locked-note"><LockKeyhole size={15}/> AI approved details are read only.</p>
+              <button type="submit" className="primary scan-save-button" disabled={busy || !loaded || scanStatus !== "APPROVED" || !!recentScan || !scannedReceipt}><CheckCircle2 size={19}/>{busy && scanStatus === "APPROVED" ? "Saving Transaction…" : recentScan ? "Transaction Already Saved" : "Save Transaction"}</button>
+              {!config.aiEnabled && <p className="notice">AI scanning requires Veryfi configuration.</p>}
             </form>
           </div>
+          <Dialog open={scanFullscreen} onOpenChange={setScanFullscreen}><DialogContent className="scan-fullscreen-dialog"><DialogTitle>Receipt Preview</DialogTitle><DialogDescription>Original receipt image or PDF.</DialogDescription><div className="scan-fullscreen-canvas">{preview && (scanPreviewType === "application/pdf" ? <iframe src={preview + "#toolbar=0"} title="Expanded receipt PDF"/> : <img src={preview} alt="Expanded scanned receipt" style={{ transform: `rotate(${scanRotation}deg)` }}/>)}</div></DialogContent></Dialog>
         </TabsContent>
 
         <TabsContent value="transactions">
