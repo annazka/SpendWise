@@ -5,8 +5,8 @@ export const metadata: Metadata = {
   title: "SpendWise — Make your budget last",
   description: "Scan receipts, track spending, and verify expense summaries on BOT Chain.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/spendwise-logo.png",
+    shortcut: "/spendwise-logo.png",
   },
 };
 

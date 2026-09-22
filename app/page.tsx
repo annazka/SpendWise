@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { PeriodPicker, SpendingChart } from "@/components/overview-controls";
 import {
   ArrowLeftRight,
@@ -555,6 +556,9 @@ export default function Home() {
 
     const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    const reportLogo = new window.Image();
+    reportLogo.src = "/spendwise-logo.png";
+    await reportLogo.decode();
     const generatedAt = new Date();
     const reportId = `SW-${generatedAt.toISOString().replace(/\D/g, "").slice(0, 14)}-${crypto.randomUUID().slice(0, 4)}`;
     const rangeLabel = reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`;
@@ -565,7 +569,8 @@ export default function Home() {
     pdf.setTextColor(20, 94, 210);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(18);
-    pdf.text("S SpendWise", 15, 17);
+    pdf.addImage(reportLogo, "PNG", 15, 8, 11, 11);
+    pdf.text("SpendWise", 29, 17);
     pdf.setTextColor(7, 35, 78);
     pdf.setFontSize(19);
     pdf.text("Expense Reimbursement Report", 15, 30);
@@ -795,7 +800,7 @@ export default function Home() {
   return <div className="app-shell" data-ui-version="overview-v3">
     <Toaster richColors />
     <aside className="app-sidebar">
-      <button className="sidebar-brand" onClick={() => setTab("overview")}><span className="neon-logo">S</span><span><strong>SpendWise</strong><small>Spend smarter.<br />Build a brighter tomorrow.</small></span></button>
+      <button className="sidebar-brand" onClick={() => setTab("overview")}><Image className="neon-logo" src="/spendwise-logo.png" alt="" width={47} height={47}/><span><strong>SpendWise</strong><small>Spend smarter.<br />Build a brighter tomorrow.</small></span></button>
       <nav>
         <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}><TrendingDown />Overview</button>
         <button className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}><ScanLine />Scan Receipt</button>
@@ -806,7 +811,7 @@ export default function Home() {
     </aside>
     <div className="app-body">
     <header className="topbar">
-      <Link className="brand" href="/" aria-label="SpendWise home"><span className="brandmark">S</span>SpendWise<span className="beta">BETA</span></Link>
+      <Link className="brand" href="/" aria-label="SpendWise home"><Image className="brandmark" src="/spendwise-logo.png" alt="" width={37} height={37}/>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
         <button className="wallet-btn wallet-card" onClick={() => setWalletOpen(true)} aria-haspopup="dialog"><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
         <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
@@ -1082,14 +1087,14 @@ export default function Home() {
 }
 
 function LoadingScreen() {
-  return <main className="gate"><div className="gate-card"><span className="brandmark large">S</span><h1>Opening SpendWise…</h1><p>Checking your wallet session.</p></div></main>;
+  return <main className="gate"><div className="gate-card"><Image className="brandmark large" src="/spendwise-logo.png" alt="SpendWise logo" width={64} height={64}/><h1>Opening SpendWise…</h1><p>Checking your wallet session.</p></div></main>;
 }
 
 function WalletGate({ busy, onConnect }: { busy: boolean; onConnect(): void }) {
   return <main className="gate">
     <Toaster richColors />
     <section className="gate-card">
-      <span className="brandmark large">S</span>
+      <Image className="brandmark large" src="/spendwise-logo.png" alt="SpendWise logo" width={64} height={64}/>
       <p className="eyebrow">WELCOME TO SPENDWISE</p>
       <h1>One wallet.<br />Four clearer money spaces.</h1>
       <p>Connect your EVM wallet to access SpendWise. A free signature proves the wallet is yours. It does not cost gas.</p>
@@ -1103,7 +1108,7 @@ function WalletGate({ busy, onConnect }: { busy: boolean; onConnect(): void }) {
 function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; onChoose(currency: Currency): void; onDisconnect(): void }) {
   return <main className="currency-gate">
     <Toaster richColors />
-    <header className="picker-head"><Link className="brand" href="/"><span className="brandmark">S</span>SpendWise</Link><button className="wallet-btn" onClick={onDisconnect}>{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button></header>
+    <header className="picker-head"><Link className="brand" href="/"><Image className="brandmark" src="/spendwise-logo.png" alt="" width={37} height={37}/>SpendWise</Link><button className="wallet-btn" onClick={onDisconnect}>{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button></header>
     <section className="picker-content">
       <p className="eyebrow">CHOOSE YOUR MONEY SPACE</p>
       <h1>Select a currency account.</h1>

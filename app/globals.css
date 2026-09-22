@@ -137,3 +137,6 @@ body{background:radial-gradient(circle at 55% -20%,#0b3472 0,transparent 36%),li
 .total-spend-card .budget-stat:hover{transform:translateY(-4px);filter:brightness(1.09);box-shadow:0 7px 25px rgba(37,217,255,.55)}
 .total-spend-card .budget-stat:active{transform:translateY(-1px)}
 @media(prefers-reduced-motion:reduce){.total-spend-card .budget-stat{transition:none}}
+
+.neon-logo,.brandmark{object-fit:cover;transform:none;box-shadow:0 0 22px rgba(30,187,255,.3);border-radius:11px}
+.brandmark.large{width:64px;height:64px}
