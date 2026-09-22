@@ -151,3 +151,6 @@ body{background:radial-gradient(circle at 55% -20%,#0b3472 0,transparent 36%),li
 .report-custom-dates input{width:100%;min-width:0;min-height:42px;padding:8px 10px;border:1px solid #1765a6;border-radius:8px;color-scheme:dark}
 .report-date-error{margin:8px 0 0;color:#ff9ea9;font-size:12px}
 @media(max-width:560px){.report-ranges{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.notification-list>button.unread{background:rgba(30,111,209,.18)}
+.notification-list>button.unread:hover{background:rgba(30,111,209,.3)}

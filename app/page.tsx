@@ -254,7 +254,7 @@ export default function Home() {
   const [reportPreviewLoading, setReportPreviewLoading] = useState(false);
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notificationSeenSignature, setNotificationSeenSignature] = useState("");
+  const [notificationReadIds, setNotificationReadIds] = useState<string[]>([]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -277,7 +277,12 @@ export default function Home() {
     if (!wallet) return;
     queueMicrotask(() => {
       setReportHistory(readReportHistory(wallet));
-      setNotificationSeenSignature(localStorage.getItem(`spendwise:notification-seen:${wallet.toLowerCase()}`) || "");
+      try {
+        const saved = JSON.parse(localStorage.getItem(`spendwise:notification-read:${wallet.toLowerCase()}`) || "[]");
+        setNotificationReadIds(Array.isArray(saved) ? saved.filter((id: unknown): id is string => typeof id === "string") : []);
+      } catch {
+        setNotificationReadIds([]);
+      }
     });
   }, [wallet]);
 
@@ -731,13 +736,18 @@ export default function Home() {
     .join("|");
   const onChainProofCount = allWalletExpenses.filter((expense) => expense.tx_hash).length;
   const proofSuccessRate = allWalletExpenses.length ? Math.round(onChainProofCount / allWalletExpenses.length * 100) : 0;
-  const notificationSignature = `${allWalletExpenses.length}:${reportHistory.length}:${onChainProofCount}:${config.contractAddress ? "chain" : "local"}`;
-  const hasUnreadNotifications = notificationSignature !== notificationSeenSignature;
   const notifications = [
     reportHistory[0] ? { id: `report-${reportHistory[0].id}`, title: "Report exported", text: reportHistory[0].fileName, tab: "proof" } : null,
     allWalletExpenses[0] ? { id: `receipt-${allWalletExpenses[0].id}`, title: "Receipt verified", text: `${allWalletExpenses[0].store} is ready for reimbursement.`, tab: "transactions" } : { id: "scan-first", title: "Start your first report", text: "Scan and verify a receipt to create reimbursement proof.", tab: "add" },
     !config.contractAddress ? { id: "chain-local", title: "Local proof mode", text: "Configure the BOT Chain contract to create on-chain proofs.", tab: "proof" } : null,
   ].filter(Boolean) as { id: string; title: string; text: string; tab: string }[];
+  const hasUnreadNotifications = notifications.some((item) => !notificationReadIds.includes(item.id));
+
+  function markNotificationsRead(ids: string[]) {
+    const next = [...new Set([...notificationReadIds, ...ids])];
+    setNotificationReadIds(next);
+    localStorage.setItem(`spendwise:notification-read:${wallet.toLowerCase()}`, JSON.stringify(next));
+  }
   const overviewExpenses = useMemo(() => [...expenses].filter((expense) => {
     if (overviewRange === "all") return true;
     const start = new Date();
@@ -830,11 +840,8 @@ export default function Home() {
         <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
         <button className="notification-button" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={21} />{hasUnreadNotifications && <i />}</button>
         {notificationsOpen && <aside className="notification-popover">
-          <div className="notification-head"><span><strong>Notifications</strong><small>{hasUnreadNotifications ? "New activity available" : "You are all caught up"}</small></span><button onClick={() => {
-            localStorage.setItem(`spendwise:notification-seen:${wallet.toLowerCase()}`, notificationSignature);
-            setNotificationSeenSignature(notificationSignature);
-          }}>Mark all as read</button></div>
-          <div className="notification-list">{notifications.map((item) => <button key={item.id} onClick={() => { setTab(item.tab); setNotificationsOpen(false); }}><span className="notification-icon"><Bell size={15}/></span><span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowUpRight size={14}/></button>)}</div>
+          <div className="notification-head"><span><strong>Notifications</strong><small>{hasUnreadNotifications ? "New activity available" : "You are all caught up"}</small></span><button onClick={() => markNotificationsRead(notifications.map((item) => item.id))}>Mark all as read</button></div>
+          <div className="notification-list">{notifications.map((item) => <button key={item.id} className={notificationReadIds.includes(item.id) ? "" : "unread"} onClick={() => { markNotificationsRead([item.id]); setTab(item.tab); setNotificationsOpen(false); }}><span className="notification-icon"><Bell size={15}/></span><span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowUpRight size={14}/></button>)}</div>
         </aside>}
       </div>
       <div className="greeting"><GreetingIcon /><span><small>{currentDateTime}</small><strong>{greetingText}</strong></span></div>
