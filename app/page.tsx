@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
   Bell,
   CalendarDays,
+  CloudSun,
   CheckCircle2,
   Copy,
   Download,
@@ -16,6 +17,7 @@ import {
   LogOut,
   Maximize2,
   MoreHorizontal,
+  Moon,
   Eye,
   FileText,
   History,
@@ -47,6 +49,7 @@ const CURRENCIES = {
 
 type Currency = keyof typeof CURRENCIES;
 type DateRange = "1" | "7" | "30" | "all";
+type ReportRange = DateRange | "custom";
 type TransactionSort = "date-desc" | "date-asc" | "amount-desc";
 type ChartRange = "1" | "7" | "30" | "90" | "all";
 type Account = { currency: Currency; budget_amount: number | null; budget_start: string | null; budget_end: string | null };
@@ -197,6 +200,11 @@ function isWithinDateRange(date: string, range: DateRange) {
   return !Number.isNaN(transactionDate.getTime()) && transactionDate >= start;
 }
 
+function isWithinReportRange(date: string, range: ReportRange, start: string, end: string) {
+  if (range === "custom") return Boolean(start && end && start <= end && date >= start && date <= end);
+  return isWithinDateRange(date, range);
+}
+
 async function hashReceipt(file: File) {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -212,7 +220,10 @@ export default function Home() {
   const [tab, setTab] = useState("overview");
   const [transactionRange, setTransactionRange] = useState<DateRange>("all");
   const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
-  const [reportRange, setReportRange] = useState<DateRange>("all");
+  const [reportRange, setReportRange] = useState<ReportRange>("all");
+  const [reportCurrencies, setReportCurrencies] = useState<Currency[]>([]);
+  const [reportStart, setReportStart] = useState(today);
+  const [reportEnd, setReportEnd] = useState(today);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -306,6 +317,7 @@ export default function Home() {
       explorer: process.env.NEXT_PUBLIC_BOT_EXPLORER || (chainId === 677 ? "https://scan.botchain.ai" : "https://scan.bohr.life"),
     });
     setCurrency(selected);
+    setReportCurrencies([selected]);
     setLoaded(true);
   }
 
@@ -537,11 +549,11 @@ export default function Home() {
   }
 
   function getApprovedReportGroups() {
-    const approvedByCurrency = (Object.keys(CURRENCIES) as Currency[])
+    const approvedByCurrency = reportCurrencies
       .map((code) => ({
         currency: code,
         expenses: readStoredAccount(wallet, code).expenses.filter((expense) =>
-          (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinDateRange(expense.date, reportRange))
+          (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinReportRange(expense.date, reportRange, reportStart, reportEnd))
           .sort((a, b) => b.date.localeCompare(a.date)),
       }))
       .filter((group) => group.expenses.length > 0);
@@ -561,7 +573,7 @@ export default function Home() {
     await reportLogo.decode();
     const generatedAt = new Date();
     const reportId = `SW-${generatedAt.toISOString().replace(/\D/g, "").slice(0, 14)}-${crypto.randomUUID().slice(0, 4)}`;
-    const rangeLabel = reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`;
+    const rangeLabel = reportRange === "custom" ? `${reportStart} to ${reportEnd}` : reportRange === "all" ? "All transactions" : `Last ${reportRange} day${reportRange === "1" ? "" : "s"}`;
     const transactionCount = approvedByCurrency.reduce((sum, group) => sum + group.expenses.length, 0);
 
     pdf.setFillColor(245, 249, 255);
@@ -653,7 +665,7 @@ export default function Home() {
     }
 
     const blob = pdf.output("blob");
-    const fileName = `SpendWise-Reimbursement-${reportRange === "all" ? "All" : `${reportRange}Days`}-${reportId}.pdf`;
+    const fileName = `SpendWise-Reimbursement-${reportCurrencies.join("-")}-${reportRange === "all" ? "All" : reportRange === "custom" ? `${reportStart}-to-${reportEnd}` : `${reportRange}Days`}-${reportId}.pdf`;
     return { id: reportId, fileName, range: rangeLabel, generatedAt: generatedAt.toISOString(), size: blob.size, transactionCount, fileKey: `${wallet.toLowerCase()}:${reportId}`, blob, url: URL.createObjectURL(blob) };
   }
 
@@ -713,7 +725,7 @@ export default function Home() {
   const allWalletExpenses = typeof window === "undefined" || !wallet ? [] : (Object.keys(CURRENCIES) as Currency[])
     .flatMap((code) => readStoredAccount(wallet, code).expenses)
     .filter((expense) => expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash));
-  const reportTransactionCount = allWalletExpenses.filter((expense) => isWithinDateRange(expense.date, reportRange)).length;
+  const reportTransactionCount = allWalletExpenses.filter((expense) => reportCurrencies.includes(expense.currency) && isWithinReportRange(expense.date, reportRange, reportStart, reportEnd)).length;
   const reportDataSignature = allWalletExpenses
     .map((expense) => `${expense.id}:${expense.date}:${expense.amount}:${expense.receipt_hash ?? ""}:${expense.tx_hash ?? ""}`)
     .join("|");
@@ -757,6 +769,7 @@ export default function Home() {
     : { store: form.store, date: form.date, amount: form.amount ? fromMinor(toMinor(form.amount, currency || "IDR"), currency || "IDR") : "", category: form.category, currency, notes: form.notes || "No notes detected" };
   const currentHour = currentTime?.getHours() ?? 12;
   const greetingText = currentHour < 12 ? "Good morning" : currentHour < 18 ? "Good afternoon" : "Good evening";
+  const GreetingIcon = currentHour < 12 ? Sun : currentHour < 18 ? CloudSun : Moon;
   const currentDateTime = currentTime ? `${currentTime.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })} · ${currentTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Loading local time…";
   const categoryTotals = useMemo(() => categories.map((name) => ({ name, amount: overviewExpenses.filter((expense) => expense.category === name).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount), [overviewExpenses]);
 
@@ -791,7 +804,7 @@ export default function Home() {
     return () => { cancelled = true; };
     // PDF generation intentionally follows the active proof tab, wallet data, and selected range.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, reportRange, reportTransactionCount, reportDataSignature, wallet]);
+  }, [tab, reportRange, reportStart, reportEnd, reportCurrencies, reportTransactionCount, reportDataSignature, wallet]);
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
@@ -824,7 +837,7 @@ export default function Home() {
           <div className="notification-list">{notifications.map((item) => <button key={item.id} onClick={() => { setTab(item.tab); setNotificationsOpen(false); }}><span className="notification-icon"><Bell size={15}/></span><span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowUpRight size={14}/></button>)}</div>
         </aside>}
       </div>
-      <div className="greeting"><Sun /><span><small>{currentDateTime}</small><strong>{greetingText}</strong></span></div>
+      <div className="greeting"><GreetingIcon /><span><small>{currentDateTime}</small><strong>{greetingText}</strong></span></div>
     </header>
 
     <main className="workspace">
@@ -982,15 +995,19 @@ export default function Home() {
           </div>
           <div className="proof-grid">
             <section className="panel report-builder">
-              <div className="sectionhead"><div><h2>Generate reimbursement report</h2><p className="muted">Create a PDF from AI-verified expenses across your currency accounts.</p></div><Download /></div>
+              <div className="sectionhead"><div><h2>Generate reimbursement report</h2><p className="muted">Create a PDF from AI-verified expenses in your selected currency accounts.</p></div><Download /></div>
+              <p className="field-title">Select currency accounts</p>
+              <div className="report-currencies">{(Object.keys(CURRENCIES) as Currency[]).map((code) => <label key={code} className={reportCurrencies.includes(code) ? "selected" : ""}><input type="checkbox" checked={reportCurrencies.includes(code)} onChange={() => { setReportPreviewLoading(true); setReportPreview(null); setReportCurrencies((selected) => selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code].sort((a, b) => Object.keys(CURRENCIES).indexOf(a) - Object.keys(CURRENCIES).indexOf(b))); }} /><span>{code}</span></label>)}</div>
               <p className="field-title">Select date range</p>
-              <div className="range-buttons">{(["1", "7", "30", "all"] as DateRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} aria-pressed={reportRange === range} onClick={() => { if (range !== reportRange) { setReportPreviewLoading(true); setReportRange(range); } }}>{range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
+              <div className="range-buttons report-ranges">{(["1", "7", "30", "all", "custom"] as ReportRange[]).map((range) => <button key={range} className={reportRange === range ? "active" : ""} aria-pressed={reportRange === range} onClick={() => { if (range !== reportRange) { setReportPreviewLoading(true); setReportRange(range); } }}>{range === "custom" ? "Custom Dates" : range === "all" ? "All Transactions" : `Last ${range} Day${range === "1" ? "" : "s"}`}</button>)}</div>
+              {reportRange === "custom" && <div className="report-custom-dates"><label>Start date<input type="date" value={reportStart} onChange={(event) => { setReportPreviewLoading(true); setReportPreview(null); setReportStart(event.target.value); }} /></label><label>End date<input type="date" value={reportEnd} onChange={(event) => { setReportPreviewLoading(true); setReportPreview(null); setReportEnd(event.target.value); }} /></label></div>}
+              {reportRange === "custom" && reportStart > reportEnd && <p className="report-date-error">End date must be on or after start date.</p>}
               <div className="report-count"><span>Approved transactions included</span><strong>{reportTransactionCount}</strong></div>
-              <button className="primary generate-report" disabled={reportPreviewLoading || !reportPreview || reportTransactionCount === 0} onClick={downloadPreviewReport}><Download size={18} />{reportPreviewLoading ? "Preparing PDF…" : "Download PDF"}<ArrowUpRight size={18} /></button>
+              <button className="primary generate-report" disabled={reportPreviewLoading || !reportPreview || reportTransactionCount === 0 || reportCurrencies.length === 0} onClick={downloadPreviewReport}><Download size={18} />{reportPreviewLoading ? "Preparing PDF…" : "Download PDF"}<ArrowUpRight size={18} /></button>
             </section>
             <section className="panel report-preview">
               <div className="sectionhead"><div><h2>Report preview</h2><p className="muted">View only. The downloaded PDF uses this exact file.</p></div><Eye /></div>
-              {reportPreviewLoading ? <div className="report-preview-loading" role="status"><span className="preview-spinner"/><strong>Preparing PDF preview</strong><small>Building the report for your selected date range…</small></div> : reportPreview ? <iframe className="pdf-preview-frame" src={`${reportPreview.url}#toolbar=0&navpanes=0&view=FitH`} title="SpendWise reimbursement PDF preview, view only" /> : <div className="report-preview-empty"><ReceiptText/><strong>No approved receipts in this period</strong><small>Choose another date range or scan a receipt first.</small></div>}
+              {reportPreviewLoading ? <div className="report-preview-loading" role="status"><span className="preview-spinner"/><strong>Preparing PDF preview</strong><small>Building the report for your selected currency and date range…</small></div> : reportPreview ? <iframe className="pdf-preview-frame" src={`${reportPreview.url}#toolbar=0&navpanes=0&view=FitH`} title="SpendWise reimbursement PDF preview, view only" /> : <div className="report-preview-empty"><ReceiptText/><strong>No approved receipts in this selection</strong><small>Choose a currency and date range with approved receipts.</small></div>}
             </section>
           </div>
           <div className="proof-lower-grid">

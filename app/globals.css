@@ -140,3 +140,14 @@ body{background:radial-gradient(circle at 55% -20%,#0b3472 0,transparent 36%),li
 
 .neon-logo,.brandmark{object-fit:cover;transform:none;box-shadow:0 0 22px rgba(30,187,255,.3);border-radius:11px}
 .brandmark.large{width:64px;height:64px}
+
+.report-currencies{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:10px 0 20px}
+.report-currencies label{display:flex;min-height:42px;align-items:center;justify-content:center;gap:8px;border:1px solid #1765a6;border-radius:8px;background:#061a3c;color:#c8d9ee;font-size:13px;font-weight:700;cursor:pointer;transition:border-color .2s ease,background .2s ease}
+.report-currencies label.selected{border-color:#2fe3ff;background:linear-gradient(180deg,#1375df,#0b47a4);color:#fff;box-shadow:0 0 14px rgba(33,216,255,.3)}
+.report-currencies input{width:15px;height:15px;margin:0;accent-color:#31ddff;cursor:pointer}
+.report-ranges{grid-template-columns:repeat(3,minmax(0,1fr))}
+.report-custom-dates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
+.report-custom-dates label{display:flex;flex-direction:column;gap:7px;color:#cfe2f9;font-size:12px;font-weight:700}
+.report-custom-dates input{width:100%;min-width:0;min-height:42px;padding:8px 10px;border:1px solid #1765a6;border-radius:8px;color-scheme:dark}
+.report-date-error{margin:8px 0 0;color:#ff9ea9;font-size:12px}
+@media(max-width:560px){.report-currencies{grid-template-columns:repeat(2,minmax(0,1fr))}.report-ranges{grid-template-columns:repeat(2,minmax(0,1fr))}}
