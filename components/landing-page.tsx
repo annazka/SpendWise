@@ -52,6 +52,28 @@ const steps = [
 export function LandingPage({ onLaunch }: { onLaunch(): void }) {
   const heroRef = useRef<HTMLElement>(null);
 
+  function scrollToSection(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
+    event.preventDefault();
+    const target = document.getElementById(id);
+    if (!target) return;
+    const start = window.scrollY;
+    const destination = target.getBoundingClientRect().top + start - 76;
+    const distance = destination - start;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      window.scrollTo(0, destination);
+      return;
+    }
+    const duration = Math.min(1100, Math.max(700, Math.abs(distance) * 0.45));
+    const startedAt = performance.now();
+    const animate = (time: number) => {
+      const progress = Math.min((time - startedAt) / duration, 1);
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      window.scrollTo(0, start + distance * eased);
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    requestAnimationFrame(animate);
+  }
+
   useEffect(() => {
     const nodes = document.querySelectorAll<HTMLElement>("[data-reveal]");
     const observer = new IntersectionObserver((entries) => {
@@ -78,7 +100,7 @@ export function LandingPage({ onLaunch }: { onLaunch(): void }) {
     <header className="landing-nav">
       <a className="landing-logo" href="#top" aria-label="SpendWise home"><Image src="/spendwise-logo.png" alt="" width={34} height={34}/><strong>SpendWise</strong></a>
       <nav aria-label="Landing navigation">
-        <a href="#features">Features</a><a href="#how-it-works">How It Works</a><a href="#benefits">Benefits</a><a href="#faqs">FAQs</a>
+        <a href="#features" onClick={(event) => scrollToSection(event, "features")}>Features</a><a href="#how-it-works" onClick={(event) => scrollToSection(event, "how-it-works")}>How It Works</a><a href="#faqs" onClick={(event) => scrollToSection(event, "faqs")}>FAQs</a>
       </nav>
       <button className="landing-button compact" onClick={onLaunch}>Launch App <ArrowRight/></button>
     </header>
@@ -88,7 +110,7 @@ export function LandingPage({ onLaunch }: { onLaunch(): void }) {
         <span className="landing-pill"><i/> AI Powered <b>•</b> Blockchain Secured</span>
         <h1>Receipts to<br/>Reimburse.<br/><em>Verified in Seconds.</em></h1>
         <p>Scan receipts, validate expenses with AI, and turn them into verifiable reimbursement records.</p>
-        <div className="landing-hero-actions"><button className="landing-button" onClick={onLaunch}>Launch App <ArrowRight/></button><a className="landing-button ghost" href="#features">Explore SpendWise</a></div>
+        <div className="landing-hero-actions"><button className="landing-button" onClick={onLaunch}>Launch App <ArrowRight/></button><a className="landing-button ghost" href="#features" onClick={(event) => scrollToSection(event, "features")}>Explore SpendWise</a></div>
       </div>
 
       <div className="landing-visual" aria-label="Interactive receipt verification preview">
@@ -132,6 +154,6 @@ export function LandingPage({ onLaunch }: { onLaunch(): void }) {
       ["Can I use multiple currencies?","Yes. IDR, USD, MYR, and SGD each have a separate expense profile under one wallet."],
     ].map(([question,answer])=><details key={question}><summary>{question}<span>+</span></summary><p>{answer}</p></details>)}</div></section>
 
-    <footer className="landing-footer"><a className="landing-logo" href="#top"><Image src="/spendwise-logo.png" alt="" width={30} height={30}/><span><strong>SpendWise</strong><small>Smarter spending. Clearer tomorrow.</small></span></a><nav><a href="#features">Features</a><a href="#how-it-works">How It Works</a><a href="#benefits">Benefits</a><a href="#faqs">FAQs</a></nav><div><a href="https://x.com/SpendWise67" target="_blank" rel="noreferrer" aria-label="SpendWise on X"><XIcon/></a><a href="https://github.com/annazka/SpendWise" target="_blank" rel="noreferrer" aria-label="SpendWise on GitHub"><GitHubIcon/></a></div></footer>
+    <footer className="landing-footer"><a className="landing-logo" href="#top" onClick={(event) => scrollToSection(event, "top")}><Image src="/spendwise-logo.png" alt="" width={30} height={30}/><span><strong>SpendWise</strong><small>Smarter spending. Clearer tomorrow.</small></span></a><nav><a href="#features" onClick={(event) => scrollToSection(event, "features")}>Features</a><a href="#how-it-works" onClick={(event) => scrollToSection(event, "how-it-works")}>How It Works</a><a href="#faqs" onClick={(event) => scrollToSection(event, "faqs")}>FAQs</a></nav><div><a href="https://x.com/SpendWise67" target="_blank" rel="noreferrer" aria-label="SpendWise on X"><XIcon/></a><a href="https://github.com/annazka/SpendWise" target="_blank" rel="noreferrer" aria-label="SpendWise on GitHub"><GitHubIcon/></a></div></footer>
   </main>;
 }
