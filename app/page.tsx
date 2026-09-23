@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname, useRouter } from "next/navigation";
 import { PeriodPicker, SpendingChart } from "@/components/overview-controls";
 import {
   ArrowLeftRight,
@@ -212,7 +213,8 @@ async function hashReceipt(file: File) {
 }
 
 export default function Home() {
-  const [appStarted, setAppStarted] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
   const [auth, setAuth] = useState<"checking" | "guest" | "connected">("checking");
   const [wallet, setWallet] = useState("");
   const [currency, setCurrency] = useState<Currency | null>(null);
@@ -324,6 +326,7 @@ export default function Home() {
       explorer: process.env.NEXT_PUBLIC_BOT_EXPLORER || (chainId === 677 ? "https://scan.botchain.ai" : "https://scan.bohr.life"),
     });
     setCurrency(selected);
+    localStorage.setItem(`spendwise:last-currency:${wallet.toLowerCase()}`, selected);
     setReportCurrencies([selected]);
     setLoaded(true);
   }
@@ -337,6 +340,7 @@ export default function Home() {
       setAuth("connected");
       setCurrency(null);
       toast.success("Wallet connected securely");
+      router.push("/currency");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Wallet connection failed.");
     } finally {
@@ -352,6 +356,7 @@ export default function Home() {
     setCurrency(null);
     setExpenses([]);
     setAccount(null);
+    router.push("/wallet");
   }
 
   async function save(action: string, data: Record<string, unknown>) {
@@ -818,10 +823,28 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, reportRange, reportStart, reportEnd, reportCurrencies, reportTransactionCount, reportDataSignature, wallet]);
 
-  if (!appStarted) return <LandingPage onLaunch={() => setAppStarted(true)} />;
+  useEffect(() => {
+    if (auth === "checking" || pathname === "/" || pathname === "/wallet") return;
+    if (auth === "guest") {
+      router.replace("/wallet");
+      return;
+    }
+    if (pathname === "/app" && !currency && wallet) {
+      const savedCurrency = localStorage.getItem(`spendwise:last-currency:${wallet.toLowerCase()}`);
+      if (savedCurrency && savedCurrency in CURRENCIES) {
+        queueMicrotask(() => loadAccount(savedCurrency as Currency).catch(() => router.replace("/currency")));
+      } else router.replace("/currency");
+    }
+    // Route guards intentionally follow wallet and currency session state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth, pathname, wallet, currency, router]);
+
+  if (pathname === "/") return <LandingPage onLaunch={() => router.push("/wallet")} />;
   if (auth === "checking") return <LoadingScreen />;
-  if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
-  if (!currency) return <CurrencyPicker wallet={wallet} onChoose={(selected) => loadAccount(selected).catch((error) => toast.error(error.message))} onDisconnect={disconnect} />;
+  if (pathname === "/wallet") return <WalletGate busy={busy} onConnect={() => auth === "connected" ? router.push("/currency") : connect()} />;
+  if (auth === "guest") return <LoadingScreen />;
+  if (pathname === "/currency") return <CurrencyPicker wallet={wallet} onChoose={(selected) => loadAccount(selected).then(() => router.push("/app")).catch((error) => toast.error(error.message))} onDisconnect={disconnect} />;
+  if (!currency) return <LoadingScreen />;
 
   return <div className="app-shell" data-ui-version="overview-v3">
     <Toaster richColors />
@@ -840,7 +863,7 @@ export default function Home() {
       <Link className="brand" href="/" aria-label="SpendWise home"><Image className="brandmark" src="/spendwise-logo.png" alt="" width={37} height={37}/>SpendWise<span className="beta">BETA</span></Link>
       <div className="header-actions">
         <button className="wallet-btn wallet-card" onClick={() => setWalletOpen(true)} aria-haspopup="dialog"><Wallet size={20} /><span><strong>Main Wallet</strong><small>{wallet.slice(0, 6)}…{wallet.slice(-4)}</small></span><i /></button>
-        <button className="account-switch" onClick={() => setCurrency(null)}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
+        <button className="account-switch" onClick={() => router.push("/currency")}><span className="currency-orb">{CURRENCIES[currency].symbol}</span>{currency}<ArrowLeftRight size={14} /></button>
         <button className="notification-button" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={21} />{hasUnreadNotifications && <i />}</button>
         {notificationsOpen && <aside className="notification-popover">
           <div className="notification-head"><span><strong>Notifications</strong><small>{hasUnreadNotifications ? "New activity available" : "You are all caught up"}</small></span><button onClick={() => markNotificationsRead(notifications.map((item) => item.id))}>Mark all as read</button></div>
