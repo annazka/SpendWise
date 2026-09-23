@@ -220,7 +220,7 @@ export default function Home() {
   const [currency, setCurrency] = useState<Currency | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [config, setConfig] = useState<Config>({ aiEnabled: false, contractAddress: "", chainId: 968, rpc: "", explorer: "" });
+  const [config, setConfig] = useState<Config>({ aiEnabled: false, contractAddress: "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da", chainId: 677, rpc: "https://rpc.botchain.ai", explorer: "https://scan.botchain.ai" });
   const [tab, setTab] = useState("overview");
   const [transactionRange, setTransactionRange] = useState<DateRange>("all");
   const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
@@ -317,10 +317,10 @@ export default function Home() {
     const data = readStoredAccount(wallet, selected);
     setAccount(data.account);
     setExpenses(data.expenses);
-    const chainId = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 968);
+    const chainId = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
     setConfig({
       aiEnabled: process.env.NEXT_PUBLIC_AI_ENABLED !== "false",
-      contractAddress: process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "",
+      contractAddress: process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da",
       chainId,
       rpc: process.env.NEXT_PUBLIC_BOT_RPC || (chainId === 677 ? "https://rpc.botchain.ai" : "https://rpc.bohr.life"),
       explorer: process.env.NEXT_PUBLIC_BOT_EXPLORER || (chainId === 677 ? "https://scan.botchain.ai" : "https://scan.bohr.life"),
