@@ -1140,10 +1140,52 @@ function LoadingScreen() {
   return <main className="gate"><div className="gate-card"><Image className="brandmark large" src="/spendwise-logo.png" alt="SpendWise logo" width={64} height={64}/><h1>Opening SpendWise…</h1><p>Checking your wallet session.</p></div></main>;
 }
 
+function AccessOverviewBackdrop() {
+  return <div className="access-overview-backdrop" aria-hidden="true">
+    <div className="access-preview-shell">
+      <aside className="access-preview-sidebar">
+        <div className="access-preview-brand"><Image src="/spendwise-logo.png" alt="" width={44} height={44}/><span><strong>SpendWise</strong><small>SMART EXPENSE TRACKING</small></span></div>
+        <nav>
+          <span className="active"><TrendingDown />Overview</span>
+          <span><ScanLine />Scan Receipt</span>
+          <span><ReceiptText />Transactions</span>
+          <span><ShieldCheck />Proof &amp; Reports</span>
+        </nav>
+        <div className="access-preview-chain"><i />BOT CHAIN<br/><small>SECURE &amp; VERIFIED</small></div>
+      </aside>
+      <div className="access-preview-main">
+        <header className="access-preview-header">
+          <div><strong>Main Wallet</strong><small>0x71A…93F</small></div>
+          <span>Rp&nbsp;&nbsp; IDR <ArrowLeftRight /></span>
+        </header>
+        <div className="access-preview-content">
+          <div className="access-preview-title"><span><small>Good morning</small><strong>Manage your spending with confidence.</strong></span><Sun/></div>
+          <section className="access-preview-grid">
+            <article className="access-preview-total">
+              <div className="access-preview-card-head"><span><TrendingDown/>Total Spend</span><b>Last 30 days⌄</b></div>
+              <strong className="access-preview-amount">Rp2.450.000</strong>
+              <div className="access-preview-stats"><span><ReceiptText/><b>18</b><small>Approved Receipts</small></span><span><CalendarDays/><b>Rp81.667</b><small>Avg. Daily Spend</small></span><span><Wallet/><b>Rp550.000</b><small>Remaining Budget</small></span></div>
+            </article>
+            <article className="access-preview-chart">
+              <div className="access-preview-card-head"><span><TrendingDown/>Receipt Spend Trend</span><b>30D</b></div>
+              <svg viewBox="0 0 560 210" role="presentation"><defs><linearGradient id="access-chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#2ddcff" stopOpacity=".38"/><stop offset="1" stopColor="#1473ff" stopOpacity="0"/></linearGradient></defs><path d="M0 168 C45 154 60 160 96 128 S150 105 186 128 S250 170 284 104 S340 42 382 79 S433 146 468 99 S520 34 560 57 L560 210 L0 210Z" fill="url(#access-chart-fill)"/><path d="M0 168 C45 154 60 160 96 128 S150 105 186 128 S250 170 284 104 S340 42 382 79 S433 146 468 99 S520 34 560 57" fill="none" stroke="#39dcff" strokeWidth="5" strokeLinecap="round"/><circle cx="382" cy="79" r="7" fill="#fff" stroke="#39dcff" strokeWidth="4"/></svg>
+            </article>
+          </section>
+          <section className="access-preview-lower">
+            <article><div className="access-preview-card-head"><span><ReceiptText/>Recent Receipts</span><b>View all</b></div>{["Grab","Starbucks","Grand Lucky"].map((name, index)=><div className="access-preview-row" key={name}><i><ReceiptText/></i><span><strong>{name}</strong><small>AI verified receipt</small></span><b>{["Rp85.000","Rp62.500","Rp348.000"][index]}</b></div>)}</article>
+            <article><div className="access-preview-card-head"><span><Sparkles/>Spending by Category</span><b>This month</b></div><div className="access-preview-donut"><span><b>Rp2.45M</b><small>Total Spend</small></span></div><div className="access-preview-bars"><i/><i/><i/></div></article>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
 function WalletGate({ busy, onConnect }: { busy: boolean; onConnect(): void }) {
-  return <main className="gate">
+  return <main className="gate access-screen">
+    <AccessOverviewBackdrop />
     <Toaster richColors />
-    <section className="gate-card">
+    <section className="gate-card access-foreground">
       <Image className="brandmark large" src="/spendwise-logo.png" alt="SpendWise logo" width={64} height={64}/>
       <p className="eyebrow">WELCOME TO SPENDWISE</p>
       <h1>One wallet.<br />Four clearer money spaces.</h1>
@@ -1156,8 +1198,10 @@ function WalletGate({ busy, onConnect }: { busy: boolean; onConnect(): void }) {
 }
 
 function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; onChoose(currency: Currency): void; onDisconnect(): void }) {
-  return <main className="currency-gate">
+  return <main className="currency-gate access-screen">
+    <AccessOverviewBackdrop />
     <Toaster richColors />
+    <div className="currency-access-panel access-foreground">
     <header className="picker-head"><Link className="brand" href="/"><Image className="brandmark" src="/spendwise-logo.png" alt="" width={37} height={37}/>SpendWise</Link><button className="wallet-btn" onClick={onDisconnect}>{wallet.slice(0, 6)}…{wallet.slice(-4)}<LogOut size={14} /></button></header>
     <section className="picker-content">
       <p className="eyebrow">CHOOSE YOUR MONEY SPACE</p>
@@ -1171,6 +1215,7 @@ function CurrencyPicker({ wallet, onChoose, onDisconnect }: { wallet: string; on
       })}</div>
       <div className="picker-note"><ShieldCheck size={20} /><span><strong>One connected wallet</strong><small>Your wallet is your SpendWise identity across all four currency accounts.</small></span></div>
     </section>
+    </div>
   </main>;
 }
 
