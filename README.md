@@ -88,7 +88,7 @@ node scripts/compile-contract.mjs
 
 | Network | Chain ID | Contract address |
 | --- | ---: | --- |
-| BOT Chain Testnet | 968 | Not deployed yet |
+| BOT Chain Testnet | 968 | `0x14653D6dca42C30158EA88C69012D7B9A2F38eee` |
 | BOT Chain Mainnet | 677 | `0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da` |
 
 Always test on BOT Chain Testnet before deploying to mainnet.
