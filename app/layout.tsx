@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./landing.css";
+import "./access-preview-v2.css";
 
 export const metadata: Metadata = {
   title: "SpendWise — Make your budget last",
