@@ -39,6 +39,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster, toast } from "sonner";
 import { authenticateWallet, recordExpense } from "@/lib/chain";
+import { LandingPage } from "@/components/landing-page";
 
 const CURRENCIES = {
   IDR: { name: "Indonesian Rupiah", symbol: "Rp", locale: "id-ID", decimals: 0, accent: "emerald" },
@@ -211,6 +212,7 @@ async function hashReceipt(file: File) {
 }
 
 export default function Home() {
+  const [appStarted, setAppStarted] = useState(false);
   const [auth, setAuth] = useState<"checking" | "guest" | "connected">("checking");
   const [wallet, setWallet] = useState("");
   const [currency, setCurrency] = useState<Currency | null>(null);
@@ -816,6 +818,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, reportRange, reportStart, reportEnd, reportCurrencies, reportTransactionCount, reportDataSignature, wallet]);
 
+  if (!appStarted) return <LandingPage onLaunch={() => setAppStarted(true)} />;
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "guest") return <WalletGate busy={busy} onConnect={connect} />;
   if (!currency) return <CurrencyPicker wallet={wallet} onChoose={(selected) => loadAccount(selected).catch((error) => toast.error(error.message))} onDisconnect={disconnect} />;
