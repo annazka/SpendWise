@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    await requireWalletSession();
+    const wallet = (await requireWalletSession()).toLowerCase();
     const form = await request.formData();
     const file = form.get("receipt");
     const currency = form.get("currency");
@@ -70,7 +70,9 @@ export async function POST(request: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const receiptHash = createHash("sha256").update(bytes).digest("hex");
-    const savedDuplicate = await supabaseRest<Array<{ id: string }>>(`expenses?receipt_hash=eq.${receiptHash}&select=id&limit=1`);
+    const savedDuplicate = await supabaseRest<Array<{ id: string }>>(
+      `expenses?wallet_address=eq.${encodeURIComponent(wallet)}&receipt_hash=eq.${receiptHash}&select=id&limit=1`,
+    );
     if (savedDuplicate.length) return Response.json({ status: "REJECTED", reasons: ["This receipt was already saved. Renaming the file does not create a new receipt."], receiptHash }, { status: 409 });
     const upload = new FormData();
     upload.append("file", new Blob([bytes], { type: file.type }), file.name);
@@ -101,7 +103,16 @@ export async function POST(request: Request) {
     const amount = valueOf(data.total ?? null);
     const detectedCurrency = valueOf(data.currency_code ?? null)?.toUpperCase() || "";
     const documentType = valueOf(data.document_type ?? null)?.toLowerCase() || "";
-    const duplicate = Boolean(data.duplicate_of || data.meta?.duplicates?.some((item) => (item.score || 0) >= 0.9));
+    const providerDuplicateIds = [
+      data.duplicate_of,
+      ...(data.meta?.duplicates || []).filter((item) => (item.score || 0) >= 0.9).map((item) => item.id),
+    ].filter((id): id is number => typeof id === "number");
+    const savedProviderDuplicate = providerDuplicateIds.length
+      ? await supabaseRest<Array<{ id: string }>>(
+        `expenses?wallet_address=eq.${encodeURIComponent(wallet)}&provider_document_id=in.(${providerDuplicateIds.join(",")})&select=id&limit=1`,
+      )
+      : [];
+    const duplicate = savedProviderDuplicate.length > 0;
     const blurry = Boolean(data.meta?.pages?.some((page) => valueOf(page.is_blurry ?? null) === true));
     const aiGenerated = Boolean(data.meta?.pages?.some((page) => valueOf(page.ai_generated ?? null) === true));
     const fraudColor = data.meta?.fraud?.color?.toLowerCase();

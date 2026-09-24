@@ -36,8 +36,8 @@ create table if not exists public.expenses (
   tx_hash text,
   status text not null default 'APPROVED' check (status in ('APPROVED', 'REJECTED')),
   created_at timestamptz not null default now(),
-  unique (receipt_hash),
-  unique (provider_document_id)
+  unique (wallet_address, receipt_hash),
+  unique (wallet_address, provider_document_id)
 );
 
 create index if not exists expenses_wallet_currency_date_idx

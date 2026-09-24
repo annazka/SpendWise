@@ -50,7 +50,9 @@ export async function POST(request: Request) {
     const duplicateFilter = providerDocumentId
       ? `or=(receipt_hash.eq.${receiptHash},provider_document_id.eq.${encodeURIComponent(providerDocumentId)},tx_hash.eq.${txHash})`
       : `or=(receipt_hash.eq.${receiptHash},tx_hash.eq.${txHash})`;
-    const duplicates = await supabaseRest<Array<{ id: string }>>(`expenses?${duplicateFilter}&select=id&limit=1`);
+    const duplicates = await supabaseRest<Array<{ id: string }>>(
+      `expenses?wallet_address=eq.${encodeURIComponent(wallet)}&${duplicateFilter}&select=id&limit=1`,
+    );
     if (duplicates.length) return Response.json({ error: "This receipt was already saved. Renaming the file does not create a new receipt." }, { status: 409 });
 
     const extension = receipt.type === "application/pdf" ? "pdf" : receipt.type.split("/")[1].replace("jpeg", "jpg");
