@@ -25,7 +25,9 @@ export async function supabaseRest<T>(path: string, init: RequestInit = {}): Pro
     throw new Error(`Supabase database error (${response.status}): ${message}`);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const body = await response.text();
+  if (!body) return undefined as T;
+  return JSON.parse(body) as T;
 }
 
 export async function uploadPrivateObject(bucket: string, path: string, bytes: ArrayBuffer, type: string) {
