@@ -28,7 +28,7 @@ Each Currency Account has its own expense history and optional budget. This is r
 - BOT Chain smart-contract integration.
 - Responsive dashboard and transaction history.
 
-For this hackathon MVP, budgets and expense history are stored in the browser and separated by wallet address and currency. Clearing browser storage or using another device creates a fresh local history. Confirmed on-chain records remain available through the BOT Chain explorer.
+Wallet profiles, budgets, approved expenses, original receipts, and exported reports are stored in Supabase and isolated by verified wallet sessions. Connecting the same wallet on another device restores the same data. BOT Chain stores the immutable proof while Supabase stores the private application data.
 
 ## Technology
 
@@ -38,7 +38,8 @@ For this hackathon MVP, budgets and expense history are stored in the browser an
 - Veryfi Data Extraction API
 - ethers v6 and MetaMask
 - Solidity 0.8.20
-- Local browser storage for the hackathon MVP
+- Supabase Postgres and private Storage
+- Signed wallet challenge with an HTTP-only server session
 
 ## Local development
 
@@ -53,14 +54,27 @@ Create `.env.local` based on `.env.example`.
 VERYFI_CLIENT_ID=
 VERYFI_USERNAME=
 VERYFI_API_KEY=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SPENDWISE_SESSION_SECRET=
 NEXT_PUBLIC_AI_ENABLED=true
-NEXT_PUBLIC_BOT_CHAIN_ID=677
-NEXT_PUBLIC_BOT_CONTRACT_ADDRESS=0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da
-NEXT_PUBLIC_BOT_RPC=https://rpc.botchain.ai
+NEXT_PUBLIC_CHAIN_ID=677
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da
+NEXT_PUBLIC_BOT_CHAIN_RPC=https://rpc.botchain.ai
 NEXT_PUBLIC_BOT_EXPLORER=https://scan.botchain.ai
 ```
 
 Never commit API keys, private keys, or seed phrases.
+
+## Supabase setup
+
+1. Create a Supabase project.
+2. Open SQL Editor and run `supabase/migrations/001_spendwise.sql` once. It creates wallet users, currency accounts, expenses, report history, indexes, RLS, and two private Storage buckets.
+3. Copy the Project URL, anon key, and service-role key into Vercel Environment Variables.
+4. Generate `SPENDWISE_SESSION_SECRET` with at least 32 random characters. This signs the HTTP-only wallet session cookie.
+
+The service-role key is server-only and must never use a `NEXT_PUBLIC_` prefix. Browser requests cannot choose another `wallet_address`; every API route derives it from the verified wallet session.
 
 ## Vercel deployment
 

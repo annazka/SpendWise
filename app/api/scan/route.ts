@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { apiError } from "@/lib/api-response";
+import { supabaseRest } from "@/lib/supabase-server";
+import { requireWalletSession } from "@/lib/wallet-session";
 
 const currencies = ["IDR", "USD", "MYR", "SGD"] as const;
 
@@ -54,6 +57,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    await requireWalletSession();
     const form = await request.formData();
     const file = form.get("receipt");
     const currency = form.get("currency");
@@ -66,6 +70,8 @@ export async function POST(request: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const receiptHash = createHash("sha256").update(bytes).digest("hex");
+    const savedDuplicate = await supabaseRest<Array<{ id: string }>>(`expenses?receipt_hash=eq.${receiptHash}&select=id&limit=1`);
+    if (savedDuplicate.length) return Response.json({ status: "REJECTED", reasons: ["This receipt was already saved. Renaming the file does not create a new receipt."], receiptHash }, { status: 409 });
     const upload = new FormData();
     upload.append("file", new Blob([bytes], { type: file.type }), file.name);
     upload.append("file_name", file.name);
@@ -126,6 +132,7 @@ export async function POST(request: Request) {
       warnings: data.warnings || [],
     });
   } catch (error) {
+    if (error instanceof Error && (error.message === "UNAUTHORIZED" || error.message.includes("Supabase is not configured") || error.message.includes("SPENDWISE_SESSION_SECRET"))) return apiError(error);
     console.error("Receipt scan failed", error);
     return Response.json({ error: "Could not validate this receipt. Try a clearer photo." }, { status: 502 });
   }

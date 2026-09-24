@@ -39,7 +39,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster, toast } from "sonner";
-import { authenticateWallet, recordExpense } from "@/lib/chain";
+import { authenticateWallet, ensureBotChainNetwork, recordExpense } from "@/lib/chain";
 import { LandingPage } from "@/components/landing-page";
 
 const CURRENCIES = {
@@ -68,6 +68,7 @@ type Expense = {
   receipt_hash: string;
   provider_document_id: string | null;
   receipt_file_key?: string | null;
+  receipt_mime?: string | null;
   notes?: string | null;
 };
 type Config = { aiEnabled: boolean; contractAddress: string; chainId: number; rpc: string; explorer: string };
@@ -76,106 +77,6 @@ type ReportPreview = ReportHistoryItem & { blob: Blob; url: string };
 
 const categories = ["Food & drinks", "Groceries", "Transport", "Shopping", "Other"];
 const today = () => new Date().toLocaleDateString("en-CA");
-
-type StoredAccount = { account: Account; expenses: Expense[] };
-
-function emptyAccount(currency: Currency): StoredAccount {
-  return {
-    account: { currency, budget_amount: null, budget_start: null, budget_end: null },
-    expenses: [],
-  };
-}
-
-function storageKey(wallet: string, currency: Currency) {
-  return `spendwise:${wallet.toLowerCase()}:${currency}`;
-}
-
-function readStoredAccount(wallet: string, currency: Currency): StoredAccount {
-  try {
-    const saved = localStorage.getItem(storageKey(wallet, currency));
-    if (!saved) return emptyAccount(currency);
-    const parsed = JSON.parse(saved) as StoredAccount;
-    return {
-      account: { ...emptyAccount(currency).account, ...parsed.account, currency },
-      expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
-    };
-  } catch {
-    return emptyAccount(currency);
-  }
-}
-
-const RECEIPT_DB = "spendwise-receipts";
-const RECEIPT_STORE = "receipts";
-const REPORT_STORE = "reports";
-
-function openReceiptDatabase() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(RECEIPT_DB, 2);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(RECEIPT_STORE)) request.result.createObjectStore(RECEIPT_STORE);
-      if (!request.result.objectStoreNames.contains(REPORT_STORE)) request.result.createObjectStore(REPORT_STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function storeReceiptFile(key: string, file: File) {
-  const database = await openReceiptDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(RECEIPT_STORE, "readwrite");
-    transaction.objectStore(RECEIPT_STORE).put(file, key);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  database.close();
-}
-
-async function getReceiptFile(key: string) {
-  const database = await openReceiptDatabase();
-  const file = await new Promise<Blob | undefined>((resolve, reject) => {
-    const request = database.transaction(RECEIPT_STORE, "readonly").objectStore(RECEIPT_STORE).get(key);
-    request.onsuccess = () => resolve(request.result as Blob | undefined);
-    request.onerror = () => reject(request.error);
-  });
-  database.close();
-  return file;
-}
-
-async function storeReportFile(key: string, file: Blob) {
-  const database = await openReceiptDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(REPORT_STORE, "readwrite");
-    transaction.objectStore(REPORT_STORE).put(file, key);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  database.close();
-}
-
-async function getReportFile(key: string) {
-  const database = await openReceiptDatabase();
-  const file = await new Promise<Blob | undefined>((resolve, reject) => {
-    const request = database.transaction(REPORT_STORE, "readonly").objectStore(REPORT_STORE).get(key);
-    request.onsuccess = () => resolve(request.result as Blob | undefined);
-    request.onerror = () => reject(request.error);
-  });
-  database.close();
-  return file;
-}
-
-function reportHistoryKey(wallet: string) {
-  return `spendwise:report-history:${wallet.toLowerCase()}`;
-}
-
-function readReportHistory(wallet: string): ReportHistoryItem[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(reportHistoryKey(wallet)) || "[]") as ReportHistoryItem[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
 
 function toMinor(value: string, currency: Currency) {
   const number = Number(value);
@@ -220,6 +121,7 @@ export default function Home() {
   const [currency, setCurrency] = useState<Currency | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [allWalletExpenses, setAllWalletExpenses] = useState<Expense[]>([]);
   const [config, setConfig] = useState<Config>({ aiEnabled: false, contractAddress: "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da", chainId: 677, rpc: "https://rpc.botchain.ai", explorer: "https://scan.botchain.ai" });
   const [tab, setTab] = useState("overview");
   const [transactionRange, setTransactionRange] = useState<DateRange>("all");
@@ -240,7 +142,6 @@ export default function Home() {
   const [scannedReceipt, setScannedReceipt] = useState<File | null>(null);
   const [scanPreviewType, setScanPreviewType] = useState("");
   const [recentScan, setRecentScan] = useState<Expense | null>(null);
-  const [recentThumbs, setRecentThumbs] = useState<Record<string, string>>({});
   const [dragOver, setDragOver] = useState(false);
   const [scanRotation, setScanRotation] = useState(0);
   const [scanZoom, setScanZoom] = useState(false);
@@ -259,15 +160,22 @@ export default function Home() {
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationReadIds, setNotificationReadIds] = useState<string[]>([]);
+  const recentThumbs = useMemo(() => Object.fromEntries(expenses
+    .filter((expense) => expense.receipt_mime?.startsWith("image/"))
+    .slice(0, 4)
+    .map((expense) => [expense.id, `/api/receipts/${expense.id}`])), [expenses]);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      const savedWallet = localStorage.getItem("spendwise:connected-wallet");
-      if (savedWallet) {
-        setWallet(savedWallet);
-        setAuth("connected");
-      } else setAuth("guest");
-    });
+    let cancelled = false;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data: { wallet?: string | null }) => {
+        if (cancelled) return;
+        if (data.wallet) { setWallet(data.wallet); setAuth("connected"); }
+        else setAuth("guest");
+      })
+      .catch(() => { if (!cancelled) setAuth("guest"); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -280,7 +188,6 @@ export default function Home() {
   useEffect(() => {
     if (!wallet) return;
     queueMicrotask(() => {
-      setReportHistory(readReportHistory(wallet));
       try {
         const saved = JSON.parse(localStorage.getItem(`spendwise:notification-read:${wallet.toLowerCase()}`) || "[]");
         setNotificationReadIds(Array.isArray(saved) ? saved.filter((id: unknown): id is string => typeof id === "string") : []);
@@ -294,35 +201,21 @@ export default function Home() {
     if (reportPreview?.url) URL.revokeObjectURL(reportPreview.url);
   }, [reportPreview]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const urls: string[] = [];
-    Promise.all(expenses.slice(0, 4).map(async (expense) => {
-      if (!expense.receipt_file_key) return null;
-      try {
-        const file = await getReceiptFile(expense.receipt_file_key);
-        if (!file || !file.type.startsWith("image/")) return null;
-        const url = URL.createObjectURL(file);
-        urls.push(url);
-        return [expense.id, url] as const;
-      } catch { return null; }
-    })).then((entries) => {
-      if (!cancelled) setRecentThumbs(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)));
-    });
-    return () => { cancelled = true; urls.forEach((url) => URL.revokeObjectURL(url)); };
-  }, [expenses]);
-
   async function loadAccount(selected: Currency) {
     setLoaded(false);
-    const data = readStoredAccount(wallet, selected);
+    const response = await fetch(`/api/data?currency=${selected}`, { cache: "no-store" });
+    const data = await response.json() as { account?: Account; expenses?: Expense[]; allExpenses?: Expense[]; reports?: ReportHistoryItem[]; error?: string };
+    if (!response.ok || !data.account || !data.expenses || !data.allExpenses) throw new Error(data.error || "Could not load your wallet data.");
     setAccount(data.account);
     setExpenses(data.expenses);
-    const chainId = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
+    setAllWalletExpenses(data.allExpenses);
+    setReportHistory(data.reports || []);
+    const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
     setConfig({
       aiEnabled: process.env.NEXT_PUBLIC_AI_ENABLED !== "false",
-      contractAddress: process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da",
+      contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da",
       chainId,
-      rpc: process.env.NEXT_PUBLIC_BOT_RPC || (chainId === 677 ? "https://rpc.botchain.ai" : "https://rpc.bohr.life"),
+      rpc: process.env.NEXT_PUBLIC_BOT_CHAIN_RPC || process.env.NEXT_PUBLIC_BOT_RPC || (chainId === 677 ? "https://rpc.botchain.ai" : "https://rpc.bohr.life"),
       explorer: process.env.NEXT_PUBLIC_BOT_EXPLORER || (chainId === 677 ? "https://scan.botchain.ai" : "https://scan.bohr.life"),
     });
     setCurrency(selected);
@@ -335,11 +228,12 @@ export default function Home() {
     setBusy(true);
     try {
       const address = await authenticateWallet();
-      localStorage.setItem("spendwise:connected-wallet", address);
       setWallet(address);
       setAuth("connected");
       setCurrency(null);
       toast.success("Wallet connected securely");
+      try { await ensureBotChainNetwork(config); }
+      catch (networkError) { toast.warning(networkError instanceof Error ? networkError.message : "Switch to BOT Chain Mainnet before recording an expense."); }
       router.push("/currency");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Wallet connection failed.");
@@ -350,44 +244,28 @@ export default function Home() {
 
   async function disconnect() {
     setWalletOpen(false);
-    localStorage.removeItem("spendwise:connected-wallet");
+    await fetch("/api/auth/session", { method: "DELETE" }).catch(() => undefined);
     setAuth("guest");
     setWallet("");
     setCurrency(null);
     setExpenses([]);
+    setAllWalletExpenses([]);
     setAccount(null);
     router.push("/wallet");
   }
 
   async function save(action: string, data: Record<string, unknown>) {
     if (!currency || !wallet) throw new Error("Choose a currency account first.");
-    const stored = readStoredAccount(wallet, currency);
     if (action === "budget") {
       const amount = typeof data.amount === "number" ? data.amount : null;
-      stored.account = {
-        ...stored.account,
-        budget_amount: amount,
-        budget_start: amount == null ? null : String(data.start || ""),
-        budget_end: amount == null ? null : String(data.end || ""),
-      };
-    } else if (action === "transaction") {
-      stored.expenses.unshift({
-        id: String(data.id),
-        store: String(data.store),
-        date: String(data.date),
-        amount: Number(data.amount),
-        category: String(data.category),
-        currency,
-        tx_hash: typeof data.txHash === "string" ? data.txHash : null,
-        onchain_id: typeof data.onchainId === "string" ? data.onchainId : null,
-        validation_status: "APPROVED",
-        receipt_hash: String(data.receiptHash),
-        provider_document_id: typeof data.providerDocumentId === "string" ? data.providerDocumentId : null,
-        receipt_file_key: typeof data.receiptFileKey === "string" ? data.receiptFileKey : null,
-        notes: typeof data.notes === "string" ? data.notes : null,
+      const response = await fetch("/api/account", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          currency, amount, start: amount == null ? null : String(data.start || ""), end: amount == null ? null : String(data.end || ""),
+        }),
       });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not save the budget.");
     } else throw new Error("Unsupported save action.");
-    localStorage.setItem(storageKey(wallet, currency), JSON.stringify(stored));
   }
 
   async function scan(file: File) {
@@ -397,8 +275,7 @@ export default function Home() {
     setBusy(true);
     try {
       const fileHash = await hashReceipt(file);
-      const alreadySaved = (Object.keys(CURRENCIES) as Currency[]).some((code) =>
-        readStoredAccount(wallet, code).expenses.some((expense) => expense.receipt_hash?.toLowerCase() === fileHash));
+      const alreadySaved = allWalletExpenses.some((expense) => expense.receipt_hash?.toLowerCase() === fileHash);
       if (alreadySaved) {
         toast.error("This receipt was already saved. Renaming the file does not create a new receipt.");
         return;
@@ -435,9 +312,9 @@ export default function Home() {
         setScannedReceipt(null);
         throw new Error(data.reasons?.[0] || data.error || "This receipt could not be verified.");
       }
-      if ((Object.keys(CURRENCIES) as Currency[]).some((code) => readStoredAccount(wallet, code).expenses.some((expense) =>
+      if (allWalletExpenses.some((expense) =>
         expense.receipt_hash?.toLowerCase() === data.receiptHash?.toLowerCase() ||
-        (data.providerDocumentId && expense.provider_document_id === data.providerDocumentId)))) {
+        (data.providerDocumentId && expense.provider_document_id === data.providerDocumentId))) {
         setScanStatus("REJECTED");
         setScanMessage("This receipt was already saved to this wallet.");
         setScannedReceipt(null);
@@ -468,34 +345,28 @@ export default function Home() {
     event.preventDefault();
     if (!currency) return;
     if (recentScan || scanStatus !== "APPROVED" || !receiptHash || !scannedReceipt) return toast.error("Scan and verify a new receipt first.");
-    if ((Object.keys(CURRENCIES) as Currency[]).some((code) => readStoredAccount(wallet, code).expenses.some((expense) =>
+    if (allWalletExpenses.some((expense) =>
       expense.receipt_hash?.toLowerCase() === receiptHash.toLowerCase() ||
-      (providerDocumentId && expense.provider_document_id === providerDocumentId)))) return toast.error("This receipt was already saved.");
+      (providerDocumentId && expense.provider_document_id === providerDocumentId))) return toast.error("This receipt was already saved.");
     const amountMinor = toMinor(form.amount, currency);
     if (amountMinor < 1) return toast.error("Enter a valid amount.");
     setBusy(true);
     try {
       const id = crypto.randomUUID();
-      const chain = await recordExpense({ id, ...form, amountMinor, currency, receiptHash }, config);
-      let receiptFileKey: string | null = null;
-      if (scannedReceipt) {
-        receiptFileKey = `${wallet.toLowerCase()}:${id}`;
-        await storeReceiptFile(receiptFileKey, scannedReceipt);
-      }
-      await save("transaction", {
-        id,
-        store: form.store,
-        date: form.date,
-        amount: amountMinor,
-        category: form.category,
-        currency,
-        txHash: chain.txHash,
-        onchainId: chain.onchainId,
-        receiptHash,
-        providerDocumentId,
-        receiptFileKey,
-        notes: form.notes,
-      });
+      const payload = new FormData();
+      payload.append("id", id); payload.append("merchant", form.store); payload.append("date", form.date);
+      payload.append("amount", String(amountMinor)); payload.append("category", form.category); payload.append("currency", currency);
+      payload.append("notes", form.notes); payload.append("receiptHash", receiptHash); payload.append("providerDocumentId", providerDocumentId || "");
+      payload.append("receipt", scannedReceipt);
+      const saveResponse = await fetch("/api/expenses", { method: "POST", body: payload });
+      const saveResult = await saveResponse.json() as { expense?: Record<string, unknown>; error?: string };
+      if (!saveResponse.ok) throw new Error(saveResult.error || "Could not save this expense.");
+      const savedExpense: Expense = {
+        id, store: form.store, date: form.date, amount: amountMinor, category: form.category, currency,
+        tx_hash: null, onchain_id: null, validation_status: "APPROVED", receipt_hash: receiptHash,
+        provider_document_id: providerDocumentId, receipt_file_key: String(saveResult.expense?.receipt_path || ""),
+        receipt_mime: scannedReceipt.type, notes: form.notes,
+      };
       setForm({ store: "", date: today(), amount: "", category: "Other", notes: "" });
       if (preview.startsWith("blob:")) URL.revokeObjectURL(preview);
       setPreview("");
@@ -506,14 +377,38 @@ export default function Home() {
       setProviderDocumentId(null);
       setScannedReceipt(null);
       await loadAccount(currency);
-      setTab("overview");
-      toast.success(chain.txHash ? "Expense recorded on BOT Chain" : "Expense saved locally");
+      setSelectedExpense(savedExpense);
+      setDetailReceipt({ url: `/api/receipts/${savedExpense.id}`, type: savedExpense.receipt_mime || "image/jpeg" });
+      setTab("transactions");
+      toast.success("Expense saved securely. Record it on BOT Chain when you are ready.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not record this expense.";
-      toast.error(message.includes("user rejected") ? "Transaction cancelled. Your form is still here." : message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function recordSavedExpense(expense: Expense) {
+    if (expense.tx_hash) return;
+    setBusy(true);
+    try {
+      const chain = await recordExpense({
+        id: expense.id, store: expense.store, date: expense.date, amountMinor: expense.amount,
+        currency: expense.currency, category: expense.category, receiptHash: expense.receipt_hash,
+      }, config);
+      if (!chain.txHash || !chain.onchainId) throw new Error("The BOT Chain contract is not configured.");
+      const response = await fetch(`/api/expenses/${expense.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ txHash: chain.txHash, onchainId: chain.onchainId }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not link the blockchain proof.");
+      await loadAccount(expense.currency);
+      toast.success("Expense recorded on BOT Chain");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not record this expense.";
+      toast.error(message.toLowerCase().includes("reject") ? "Blockchain transaction cancelled. The expense remains safely saved." : message);
+    } finally { setBusy(false); }
   }
 
   async function showRecentScan(expense: Expense) {
@@ -526,25 +421,13 @@ export default function Home() {
     setPreview("");
     setScanPreviewType("");
     if (!expense.receipt_file_key) return;
-    try {
-      const file = await getReceiptFile(expense.receipt_file_key);
-      if (file) {
-        setPreview(URL.createObjectURL(file));
-        setScanPreviewType(file.type);
-      }
-    } catch { toast.error("Could not load this receipt on this device."); }
+    setPreview(`/api/receipts/${expense.id}`);
+    setScanPreviewType(expense.receipt_mime || "image/jpeg");
   }
 
   async function viewReceipt(expense: Expense) {
     if (!expense.receipt_file_key) return toast.error("The original file is unavailable because this receipt was saved before file storage was enabled.");
-    try {
-      const file = await getReceiptFile(expense.receipt_file_key);
-      if (!file) return toast.error("The original receipt file is no longer available on this device.");
-      if (receiptViewer?.url) URL.revokeObjectURL(receiptViewer.url);
-      setReceiptViewer({ url: URL.createObjectURL(file), type: file.type });
-    } catch {
-      toast.error("Could not open the original receipt file.");
-    }
+    setReceiptViewer({ url: `/api/receipts/${expense.id}`, type: expense.receipt_mime || "image/jpeg" });
   }
 
   async function openTransactionDetails(expense: Expense) {
@@ -552,19 +435,14 @@ export default function Home() {
     if (detailReceipt?.url) URL.revokeObjectURL(detailReceipt.url);
     setDetailReceipt(null);
     if (!expense.receipt_file_key) return;
-    try {
-      const file = await getReceiptFile(expense.receipt_file_key);
-      if (file) setDetailReceipt({ url: URL.createObjectURL(file), type: file.type });
-    } catch {
-      toast.error("Could not load the original receipt preview.");
-    }
+    setDetailReceipt({ url: `/api/receipts/${expense.id}`, type: expense.receipt_mime || "image/jpeg" });
   }
 
   function getApprovedReportGroups() {
     const approvedByCurrency = reportCurrencies
       .map((code) => ({
         currency: code,
-        expenses: readStoredAccount(wallet, code).expenses.filter((expense) =>
+        expenses: allWalletExpenses.filter((expense) => expense.currency === code &&
           (expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash)) && isWithinReportRange(expense.date, reportRange, reportStart, reportEnd))
           .sort((a, b) => b.date.localeCompare(a.date)),
       }))
@@ -695,10 +573,19 @@ export default function Home() {
   async function downloadPreviewReport() {
     if (!reportPreview) return toast.error("Generate a PDF preview first.");
     try {
-      await storeReportFile(reportPreview.fileKey, reportPreview.blob);
-      const historyItem: ReportHistoryItem = { id: reportPreview.id, fileName: reportPreview.fileName, range: reportPreview.range, generatedAt: reportPreview.generatedAt, size: reportPreview.size, transactionCount: reportPreview.transactionCount, fileKey: reportPreview.fileKey };
+      if (reportHistory.some((item) => item.id === reportPreview.id)) {
+        triggerReportDownload(reportPreview.blob, reportPreview.fileName);
+        return;
+      }
+      const payload = new FormData();
+      payload.append("id", reportPreview.id); payload.append("fileName", reportPreview.fileName); payload.append("range", reportPreview.range);
+      payload.append("transactionCount", String(reportPreview.transactionCount));
+      payload.append("report", new File([reportPreview.blob], reportPreview.fileName, { type: "application/pdf" }));
+      const response = await fetch("/api/reports", { method: "POST", body: payload });
+      const result = await response.json() as { item?: ReportHistoryItem; error?: string };
+      if (!response.ok || !result.item) throw new Error(result.error || "Could not save the report.");
+      const historyItem = result.item;
       const next = [historyItem, ...reportHistory.filter((item) => item.id !== historyItem.id)].slice(0, 20);
-      localStorage.setItem(reportHistoryKey(wallet), JSON.stringify(next));
       setReportHistory(next);
       triggerReportDownload(reportPreview.blob, reportPreview.fileName);
       toast.success("Reimbursement PDF downloaded and added to history");
@@ -709,8 +596,9 @@ export default function Home() {
 
   async function downloadHistoryReport(item: ReportHistoryItem) {
     try {
-      const blob = await getReportFile(item.fileKey);
-      if (!blob) return toast.error("This report file is no longer stored on this device.");
+      const response = await fetch(`/api/reports/${encodeURIComponent(item.id)}`);
+      if (!response.ok) throw new Error("The report file is unavailable.");
+      const blob = await response.blob();
       triggerReportDownload(blob, item.fileName);
     } catch {
       toast.error("Could not open this report file.");
@@ -734,9 +622,6 @@ export default function Home() {
   const transactionPageSize = 10;
   const transactionPageCount = Math.max(1, Math.ceil(filteredExpenses.length / transactionPageSize));
   const paginatedExpenses = filteredExpenses.slice((transactionPage - 1) * transactionPageSize, transactionPage * transactionPageSize);
-  const allWalletExpenses = typeof window === "undefined" || !wallet ? [] : (Object.keys(CURRENCIES) as Currency[])
-    .flatMap((code) => readStoredAccount(wallet, code).expenses)
-    .filter((expense) => expense.validation_status === "APPROVED" || Boolean(expense.receipt_hash));
   const reportTransactionCount = allWalletExpenses.filter((expense) => reportCurrencies.includes(expense.currency) && isWithinReportRange(expense.date, reportRange, reportStart, reportEnd)).length;
   const reportDataSignature = allWalletExpenses
     .map((expense) => `${expense.id}:${expense.date}:${expense.amount}:${expense.receipt_hash ?? ""}:${expense.tx_hash ?? ""}`)
@@ -1003,7 +888,7 @@ export default function Home() {
                 {paginatedExpenses.length ? paginatedExpenses.map((expense) => <div className={`transaction-table-row ${selectedExpense?.id === expense.id ? "selected" : ""}`} key={expense.id} onClick={() => openTransactionDetails(expense)}>
                   <span className="merchant-cell"><span className="tx-icon"><ReceiptText size={18}/></span><b>{expense.store}</b></span>
                   <span>{expense.date}</span><strong>{fromMinor(expense.amount, expense.currency)}</strong><span>{expense.category}</span><span><i className="verified-dot"/>Verified</span>
-                  <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <small>Local proof</small>}</span>
+                  <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <button className="record-proof-button" disabled={busy} onClick={(event) => { event.stopPropagation(); void recordSavedExpense(expense); }}>Record Expense</button>}</span>
                   <button aria-label={`View ${expense.store} details`} onClick={(event) => { event.stopPropagation(); openTransactionDetails(expense); }}><MoreHorizontal/></button>
                 </div>) : expenses.length ? <div className="empty-state"><CalendarDays size={32}/><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")}/>}
                 {filteredExpenses.length > 0 && <div className="table-pagination"><span>Showing {(transactionPage - 1) * transactionPageSize + 1}–{Math.min(transactionPage * transactionPageSize, filteredExpenses.length)} of {filteredExpenses.length} transactions</span><div><button disabled={transactionPage === 1} onClick={() => setTransactionPage(page => page - 1)}>‹</button>{Array.from({length: transactionPageCount}, (_, index) => <button key={index} className={transactionPage === index + 1 ? "active" : ""} onClick={() => setTransactionPage(index + 1)}>{index + 1}</button>)}<button disabled={transactionPage === transactionPageCount} onClick={() => setTransactionPage(page => page + 1)}>›</button></div></div>}
@@ -1015,7 +900,7 @@ export default function Home() {
               <h3>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</h3><p className="muted">{selectedExpense.date}</p>
               <button className="detail-receipt" onClick={() => viewReceipt(selectedExpense)}>{detailReceipt?.type === "application/pdf" ? <iframe src={detailReceipt.url} title="Receipt preview"/> : detailReceipt ? <img src={detailReceipt.url} alt="Original receipt"/> : <span><ReceiptText size={40}/>Original receipt unavailable</span>}<Eye size={18}/></button>
               <h3 className="detail-section-title">Extracted Information</h3><dl><div><dt>Merchant</dt><dd>{selectedExpense.store}</dd></div><div><dt>Date</dt><dd>{selectedExpense.date}</dd></div><div><dt>Amount</dt><dd>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</dd></div><div><dt>Category</dt><dd>{selectedExpense.category}</dd></div><div><dt>Receipt Hash</dt><dd>{selectedExpense.receipt_hash.slice(0,12)}…</dd></div></dl>
-              <div className="detail-proof"><div><h3>Blockchain Proof</h3>{selectedExpense.tx_hash && <a href={`${config.explorer}/tx/${selectedExpense.tx_hash}`} target="_blank" rel="noreferrer">View on Explorer <ExternalLink size={14}/></a>}</div><p><ShieldCheck/><span><strong>{selectedExpense.tx_hash ? "Verified & Stored on Blockchain" : "AI Verified Receipt"}</strong><small>{selectedExpense.tx_hash ? "Immutable transaction proof" : "Stored locally on this device"}</small></span></p></div>
+              <div className="detail-proof"><div><h3>Blockchain Proof</h3>{selectedExpense.tx_hash && <a href={`${config.explorer}/tx/${selectedExpense.tx_hash}`} target="_blank" rel="noreferrer">View on Explorer <ExternalLink size={14}/></a>}</div><p><ShieldCheck/><span><strong>{selectedExpense.tx_hash ? "Verified & Stored on Blockchain" : "AI Verified Receipt"}</strong><small>{selectedExpense.tx_hash ? "Immutable transaction proof" : "Securely stored and ready to record"}</small></span></p>{!selectedExpense.tx_hash && <button className="primary record-proof-detail" disabled={busy} onClick={() => void recordSavedExpense(selectedExpense)}><ShieldCheck size={16}/>Record Expense on BOT Chain</button>}</div>
             </aside>}
           </div>
         </TabsContent>
@@ -1044,8 +929,8 @@ export default function Home() {
             </section>
           </div>
           <div className="proof-lower-grid">
-            <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.slice(0, 5).map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Local proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <small>Not on-chain</small>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
-            <section className="panel report-history"><div className="sectionhead"><div><h2>Generated reports history</h2><p className="muted">Reports downloaded from this wallet on this device.</p></div><ReceiptText/></div>
+            <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.slice(0, 5).map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Pending on-chain proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <button className="record-proof-button" disabled={busy} onClick={() => void recordSavedExpense(expense)}>Record Expense</button>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
+            <section className="panel report-history"><div className="sectionhead"><div><h2>Generated reports history</h2><p className="muted">Reports securely stored for this wallet.</p></div><ReceiptText/></div>
               {reportHistory.length ? <div className="report-history-list">{reportHistory.map((item) => <div key={item.id} className="report-history-row"><span><ReceiptText/><span><strong>{item.fileName}</strong><small>{item.transactionCount} receipts · {item.range}</small></span></span><time>{new Date(item.generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</time><small>{item.size < 1024 * 1024 ? `${Math.ceil(item.size / 1024)} KB` : `${(item.size / 1024 / 1024).toFixed(1)} MB`}</small><button aria-label={`Download ${item.fileName}`} onClick={() => downloadHistoryReport(item)}><Download/></button></div>)}</div> : <div className="empty-report-history"><ReceiptText/><strong>No exported reports yet</strong><small>Downloaded PDFs will appear here.</small></div>}
             </section>
           </div>
@@ -1128,7 +1013,7 @@ export default function Home() {
     }}>
       <DialogContent className="receipt-dialog">
         <DialogTitle>Original scanned receipt</DialogTitle>
-        <DialogDescription>This is the original file stored on this device after AI verification.</DialogDescription>
+        <DialogDescription>This is the original file securely stored after AI verification.</DialogDescription>
         {receiptViewer?.type === "application/pdf" ? <iframe className="receipt-document" src={receiptViewer.url} title="Original scanned receipt PDF" /> : receiptViewer && <img className="receipt-document" src={receiptViewer.url} alt="Original scanned receipt" />}
         {receiptViewer && <a className="secondary receipt-file-link" href={receiptViewer.url} target="_blank" rel="noreferrer">Open original file <ArrowUpRight size={16} /></a>}
       </DialogContent>

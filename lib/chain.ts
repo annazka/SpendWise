@@ -15,23 +15,45 @@ export async function authenticateWallet() {
   const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
   const wallet = accounts[0];
   if (!wallet) throw new Error("No wallet account was selected.");
-  const message = `Sign in to SpendWise\n\nWallet: ${wallet}\nThis signature is free and does not submit a blockchain transaction.`;
-  await provider.request({ method: "personal_sign", params: [message, wallet] });
-  return wallet;
+  const challengeResponse = await fetch("/api/auth/challenge", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet }),
+  });
+  const challenge = await challengeResponse.json() as { message?: string; error?: string };
+  if (!challengeResponse.ok || !challenge.message) throw new Error(challenge.error || "Could not create a wallet challenge.");
+  const signature = await provider.request({ method: "personal_sign", params: [challenge.message, wallet] }) as string;
+  const verifyResponse = await fetch("/api/auth/verify", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet, signature }),
+  });
+  const verified = await verifyResponse.json() as { wallet?: string; error?: string };
+  if (!verifyResponse.ok || !verified.wallet) throw new Error(verified.error || "Wallet verification failed.");
+  return verified.wallet;
+}
+
+export async function ensureBotChainNetwork(config: { chainId: number; rpc: string; explorer: string }) {
+  const injected = ethereum();
+  const chainId = `0x${Number(config.chainId).toString(16)}`;
+  try {
+    await injected.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+  } catch (error) {
+    const code = (error as { code?: number })?.code;
+    if (code !== 4902) throw new Error("Switch MetaMask to BOT Chain Mainnet and try again.");
+    await injected.request({ method: "wallet_addEthereumChain", params: [{
+      chainId,
+      chainName: config.chainId === 677 ? "BOT Chain Mainnet" : "BOT Chain Testnet",
+      nativeCurrency: { name: "BOT", symbol: "BOT", decimals: 18 },
+      rpcUrls: [config.rpc],
+      blockExplorerUrls: [config.explorer],
+    }] });
+  }
 }
 
 export async function recordExpense(
   expense: { id: string; store: string; date: string; amountMinor: number; currency: string; category: string; receiptHash: string },
-  config: { contractAddress: string; chainId: number; explorer: string },
+  config: { contractAddress: string; chainId: number; rpc: string; explorer: string },
 ) {
   if (!isAddress(config.contractAddress)) return { txHash: null, onchainId: null, url: null };
   const injected = ethereum();
-  const targetChain = `0x${Number(config.chainId).toString(16)}`;
-  try {
-    await injected.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetChain }] });
-  } catch {
-    throw new Error("Switch MetaMask to the configured BOT Chain network and try again.");
-  }
+  await ensureBotChainNetwork(config);
   const provider = new BrowserProvider(injected as never);
   if (await provider.getCode(config.contractAddress) === "0x") throw new Error("No SpendWise contract exists at the configured address.");
   const signer = await provider.getSigner();
