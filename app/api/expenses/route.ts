@@ -24,17 +24,32 @@ export async function POST(request: Request) {
     const notes = String(form.get("notes") || "").trim().slice(0, 240);
     const providerDocumentId = String(form.get("providerDocumentId") || "").trim() || null;
     const approvedHash = String(form.get("receiptHash") || "").toLowerCase();
+    const txHash = String(form.get("txHash") || "").trim();
+    const onchainId = String(form.get("onchainId") || "").trim();
     if (!(receipt instanceof File) || !mimeTypes.includes(receipt.type) || receipt.size > 20 * 1024 * 1024) return Response.json({ error: "Invalid receipt file." }, { status: 400 });
-    if (!/^[0-9a-f-]{36}$/i.test(id) || !merchant || !Number.isSafeInteger(amount) || amount < 1 || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || !currencies.includes(currency)) {
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !merchant || !Number.isSafeInteger(amount) || amount < 1 || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || !currencies.includes(currency) || !/^0x[0-9a-f]{64}$/i.test(txHash) || !/^0x[0-9a-f]{64}$/i.test(onchainId)) {
       return Response.json({ error: "The verified expense details are incomplete." }, { status: 400 });
     }
     const bytes = await receipt.arrayBuffer();
     const receiptHash = createHash("sha256").update(Buffer.from(bytes)).digest("hex");
     if (!approvedHash || approvedHash !== receiptHash) return Response.json({ error: "The receipt changed after AI validation. Scan it again." }, { status: 409 });
 
+    const rpc = process.env.NEXT_PUBLIC_BOT_CHAIN_RPC || process.env.NEXT_PUBLIC_BOT_RPC || "https://rpc.botchain.ai";
+    const contractAddress = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_BOT_CONTRACT_ADDRESS || "0x1f04BA244bfDAc7db33061eA88DEE66eD7AFB2Da").toLowerCase();
+    const chainResponse = await fetch(rpc, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [txHash] }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const chainData = await chainResponse.json() as { result?: { status?: string; from?: string; to?: string } | null };
+    const proof = chainData.result;
+    if (!chainResponse.ok || !proof || proof.status !== "0x1" || proof.from?.toLowerCase() !== wallet || !contractAddress || proof.to?.toLowerCase() !== contractAddress) {
+      return Response.json({ error: "A confirmed SpendWise transaction on BOT Chain is required before saving this receipt." }, { status: 409 });
+    }
+
     const duplicateFilter = providerDocumentId
-      ? `or=(receipt_hash.eq.${receiptHash},provider_document_id.eq.${encodeURIComponent(providerDocumentId)})`
-      : `receipt_hash=eq.${receiptHash}`;
+      ? `or=(receipt_hash.eq.${receiptHash},provider_document_id.eq.${encodeURIComponent(providerDocumentId)},tx_hash.eq.${txHash})`
+      : `or=(receipt_hash.eq.${receiptHash},tx_hash.eq.${txHash})`;
     const duplicates = await supabaseRest<Array<{ id: string }>>(`expenses?${duplicateFilter}&select=id&limit=1`);
     if (duplicates.length) return Response.json({ error: "This receipt was already saved. Renaming the file does not create a new receipt." }, { status: 409 });
 
@@ -47,7 +62,8 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         id, wallet_address: wallet, merchant, amount, expense_date: expenseDate, category, currency, notes,
         receipt_path: uploadedPath, receipt_mime: receipt.type, receipt_hash: receiptHash,
-        provider_document_id: providerDocumentId, expense_hash: expenseHash, status: "APPROVED",
+        provider_document_id: providerDocumentId, expense_hash: expenseHash, onchain_id: onchainId,
+        tx_hash: txHash, status: "APPROVED",
       }),
     });
     return Response.json({ expense: rows[0] }, { status: 201 });

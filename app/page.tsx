@@ -353,17 +353,20 @@ export default function Home() {
     setBusy(true);
     try {
       const id = crypto.randomUUID();
+      const chain = await recordExpense({ id, ...form, amountMinor, currency, receiptHash }, config);
+      if (!chain.txHash || !chain.onchainId) throw new Error("The BOT Chain contract is not configured.");
       const payload = new FormData();
       payload.append("id", id); payload.append("merchant", form.store); payload.append("date", form.date);
       payload.append("amount", String(amountMinor)); payload.append("category", form.category); payload.append("currency", currency);
       payload.append("notes", form.notes); payload.append("receiptHash", receiptHash); payload.append("providerDocumentId", providerDocumentId || "");
+      payload.append("txHash", chain.txHash); payload.append("onchainId", chain.onchainId);
       payload.append("receipt", scannedReceipt);
       const saveResponse = await fetch("/api/expenses", { method: "POST", body: payload });
       const saveResult = await saveResponse.json() as { expense?: Record<string, unknown>; error?: string };
       if (!saveResponse.ok) throw new Error(saveResult.error || "Could not save this expense.");
       const savedExpense: Expense = {
         id, store: form.store, date: form.date, amount: amountMinor, category: form.category, currency,
-        tx_hash: null, onchain_id: null, validation_status: "APPROVED", receipt_hash: receiptHash,
+        tx_hash: chain.txHash, onchain_id: chain.onchainId, validation_status: "APPROVED", receipt_hash: receiptHash,
         provider_document_id: providerDocumentId, receipt_file_key: String(saveResult.expense?.receipt_path || ""),
         receipt_mime: scannedReceipt.type, notes: form.notes,
       };
@@ -380,35 +383,13 @@ export default function Home() {
       setSelectedExpense(savedExpense);
       setDetailReceipt({ url: `/api/receipts/${savedExpense.id}`, type: savedExpense.receipt_mime || "image/jpeg" });
       setTab("transactions");
-      toast.success("Expense saved securely. Record it on BOT Chain when you are ready.");
+      toast.success("Expense recorded on BOT Chain and saved securely");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not record this expense.";
-      toast.error(message);
+      toast.error(message.toLowerCase().includes("reject") ? "Transaction cancelled. The receipt was not saved." : message);
     } finally {
       setBusy(false);
     }
-  }
-
-  async function recordSavedExpense(expense: Expense) {
-    if (expense.tx_hash) return;
-    setBusy(true);
-    try {
-      const chain = await recordExpense({
-        id: expense.id, store: expense.store, date: expense.date, amountMinor: expense.amount,
-        currency: expense.currency, category: expense.category, receiptHash: expense.receipt_hash,
-      }, config);
-      if (!chain.txHash || !chain.onchainId) throw new Error("The BOT Chain contract is not configured.");
-      const response = await fetch(`/api/expenses/${expense.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ txHash: chain.txHash, onchainId: chain.onchainId }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Could not link the blockchain proof.");
-      await loadAccount(expense.currency);
-      toast.success("Expense recorded on BOT Chain");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not record this expense.";
-      toast.error(message.toLowerCase().includes("reject") ? "Blockchain transaction cancelled. The expense remains safely saved." : message);
-    } finally { setBusy(false); }
   }
 
   async function showRecentScan(expense: Expense) {
@@ -863,7 +844,7 @@ export default function Home() {
                 ] as [string, string][]).map(([label, value]) => <div className="scan-detail-row" key={label}><span>{label}</span><strong>{value || "Waiting for AI scan"}{(scanStatus === "APPROVED" || recentScan) && <CheckCircle2 size={17} aria-label="Verified by AI"/>}</strong></div>)}
               </div>
               <p className="scan-locked-note"><LockKeyhole size={15}/> AI approved details are read only.</p>
-              <button type="submit" className="primary scan-save-button" disabled={busy || !loaded || scanStatus !== "APPROVED" || !!recentScan || !scannedReceipt}><CheckCircle2 size={19}/>{busy && scanStatus === "APPROVED" ? "Saving Transaction…" : recentScan ? "Transaction Already Saved" : "Save Transaction"}</button>
+              <button type="submit" className="primary scan-save-button" disabled={busy || !loaded || scanStatus !== "APPROVED" || !!recentScan || !scannedReceipt}><CheckCircle2 size={19}/>{busy && scanStatus === "APPROVED" ? "Confirming on BOT Chain…" : recentScan ? "Transaction Already Saved" : "Save Transaction"}</button>
               {!config.aiEnabled && <p className="notice">AI scanning requires Veryfi configuration.</p>}
             </form>
           </div>
@@ -888,7 +869,7 @@ export default function Home() {
                 {paginatedExpenses.length ? paginatedExpenses.map((expense) => <div className={`transaction-table-row ${selectedExpense?.id === expense.id ? "selected" : ""}`} key={expense.id} onClick={() => openTransactionDetails(expense)}>
                   <span className="merchant-cell"><span className="tx-icon"><ReceiptText size={18}/></span><b>{expense.store}</b></span>
                   <span>{expense.date}</span><strong>{fromMinor(expense.amount, expense.currency)}</strong><span>{expense.category}</span><span><i className="verified-dot"/>Verified</span>
-                  <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <button className="record-proof-button" disabled={busy} onClick={(event) => { event.stopPropagation(); void recordSavedExpense(expense); }}>Record Expense</button>}</span>
+                  <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <small>Proof unavailable</small>}</span>
                   <button aria-label={`View ${expense.store} details`} onClick={(event) => { event.stopPropagation(); openTransactionDetails(expense); }}><MoreHorizontal/></button>
                 </div>) : expenses.length ? <div className="empty-state"><CalendarDays size={32}/><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")}/>}
                 {filteredExpenses.length > 0 && <div className="table-pagination"><span>Showing {(transactionPage - 1) * transactionPageSize + 1}–{Math.min(transactionPage * transactionPageSize, filteredExpenses.length)} of {filteredExpenses.length} transactions</span><div><button disabled={transactionPage === 1} onClick={() => setTransactionPage(page => page - 1)}>‹</button>{Array.from({length: transactionPageCount}, (_, index) => <button key={index} className={transactionPage === index + 1 ? "active" : ""} onClick={() => setTransactionPage(index + 1)}>{index + 1}</button>)}<button disabled={transactionPage === transactionPageCount} onClick={() => setTransactionPage(page => page + 1)}>›</button></div></div>}
@@ -900,7 +881,7 @@ export default function Home() {
               <h3>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</h3><p className="muted">{selectedExpense.date}</p>
               <button className="detail-receipt" onClick={() => viewReceipt(selectedExpense)}>{detailReceipt?.type === "application/pdf" ? <iframe src={detailReceipt.url} title="Receipt preview"/> : detailReceipt ? <img src={detailReceipt.url} alt="Original receipt"/> : <span><ReceiptText size={40}/>Original receipt unavailable</span>}<Eye size={18}/></button>
               <h3 className="detail-section-title">Extracted Information</h3><dl><div><dt>Merchant</dt><dd>{selectedExpense.store}</dd></div><div><dt>Date</dt><dd>{selectedExpense.date}</dd></div><div><dt>Amount</dt><dd>{fromMinor(selectedExpense.amount, selectedExpense.currency)}</dd></div><div><dt>Category</dt><dd>{selectedExpense.category}</dd></div><div><dt>Receipt Hash</dt><dd>{selectedExpense.receipt_hash.slice(0,12)}…</dd></div></dl>
-              <div className="detail-proof"><div><h3>Blockchain Proof</h3>{selectedExpense.tx_hash && <a href={`${config.explorer}/tx/${selectedExpense.tx_hash}`} target="_blank" rel="noreferrer">View on Explorer <ExternalLink size={14}/></a>}</div><p><ShieldCheck/><span><strong>{selectedExpense.tx_hash ? "Verified & Stored on Blockchain" : "AI Verified Receipt"}</strong><small>{selectedExpense.tx_hash ? "Immutable transaction proof" : "Securely stored and ready to record"}</small></span></p>{!selectedExpense.tx_hash && <button className="primary record-proof-detail" disabled={busy} onClick={() => void recordSavedExpense(selectedExpense)}><ShieldCheck size={16}/>Record Expense on BOT Chain</button>}</div>
+              <div className="detail-proof"><div><h3>Blockchain Proof</h3>{selectedExpense.tx_hash && <a href={`${config.explorer}/tx/${selectedExpense.tx_hash}`} target="_blank" rel="noreferrer">View on Explorer <ExternalLink size={14}/></a>}</div><p><ShieldCheck/><span><strong>{selectedExpense.tx_hash ? "Verified & Stored on Blockchain" : "Blockchain proof unavailable"}</strong><small>{selectedExpense.tx_hash ? "Immutable transaction proof" : "This legacy record has no transaction hash"}</small></span></p></div>
             </aside>}
           </div>
         </TabsContent>
@@ -929,7 +910,7 @@ export default function Home() {
             </section>
           </div>
           <div className="proof-lower-grid">
-            <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.slice(0, 5).map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Pending on-chain proof"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <button className="record-proof-button" disabled={busy} onClick={() => void recordSavedExpense(expense)}>Record Expense</button>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
+            <section className="panel proof-center"><div className="sectionhead"><div><h2>Blockchain proof center</h2><p className="muted">Approved receipts secured on BOT Chain.</p></div></div>{expenses.length ? expenses.slice(0, 5).map((expense) => <div className="proof-row" key={expense.id}><span><ReceiptText size={17} /><b>{expense.store}</b></span><code>{expense.tx_hash ? `${expense.tx_hash.slice(0, 8)}…${expense.tx_hash.slice(-6)}` : "Proof unavailable"}</code><span className="status-chip"><CheckCircle2 size={13} />Verified</span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} target="_blank" rel="noreferrer">View proof <ArrowUpRight size={14} /></a> : <small>Legacy record</small>}</div>) : <EmptyTransactions onAdd={() => setTab("add")} />}</section>
             <section className="panel report-history"><div className="sectionhead"><div><h2>Generated reports history</h2><p className="muted">Reports securely stored for this wallet.</p></div><ReceiptText/></div>
               {reportHistory.length ? <div className="report-history-list">{reportHistory.map((item) => <div key={item.id} className="report-history-row"><span><ReceiptText/><span><strong>{item.fileName}</strong><small>{item.transactionCount} receipts · {item.range}</small></span></span><time>{new Date(item.generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</time><small>{item.size < 1024 * 1024 ? `${Math.ceil(item.size / 1024)} KB` : `${(item.size / 1024 / 1024).toFixed(1)} MB`}</small><button aria-label={`Download ${item.fileName}`} onClick={() => downloadHistoryReport(item)}><Download/></button></div>)}</div> : <div className="empty-report-history"><ReceiptText/><strong>No exported reports yet</strong><small>Downloaded PDFs will appear here.</small></div>}
             </section>
