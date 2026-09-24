@@ -17,7 +17,6 @@ import {
   ExternalLink,
   LogOut,
   Maximize2,
-  MoreHorizontal,
   Moon,
   Eye,
   FileText,
@@ -865,12 +864,11 @@ export default function Home() {
                 <span className="approved-filter"><ShieldCheck size={16}/>Approved</span>
               </div>
               <div className="transaction-table panel">
-                <div className="transaction-table-head"><span>Merchant</span><span>Date</span><span>Amount</span><span>Category</span><span>Status</span><span>Blockchain Proof</span><span>Actions</span></div>
+                <div className="transaction-table-head"><span>Merchant</span><span>Date</span><span>Amount</span><span>Category</span><span>Status</span><span>Blockchain Proof</span></div>
                 {paginatedExpenses.length ? paginatedExpenses.map((expense) => <div className={`transaction-table-row ${selectedExpense?.id === expense.id ? "selected" : ""}`} key={expense.id} onClick={() => openTransactionDetails(expense)}>
                   <span className="merchant-cell"><span className="tx-icon"><ReceiptText size={18}/></span><b>{expense.store}</b></span>
                   <span>{expense.date}</span><strong>{fromMinor(expense.amount, expense.currency)}</strong><span>{expense.category}</span><span><i className="verified-dot"/>Verified</span>
                   <span>{expense.tx_hash ? <a href={`${config.explorer}/tx/${expense.tx_hash}`} onClick={event => event.stopPropagation()} target="_blank" rel="noreferrer">{expense.tx_hash.slice(0,7)}…{expense.tx_hash.slice(-4)} <ExternalLink size={13}/></a> : <small>Proof unavailable</small>}</span>
-                  <button aria-label={`View ${expense.store} details`} onClick={(event) => { event.stopPropagation(); openTransactionDetails(expense); }}><MoreHorizontal/></button>
                 </div>) : expenses.length ? <div className="empty-state"><CalendarDays size={32}/><h3>No transactions in this period.</h3><p>Choose another date range to see more approved receipts.</p></div> : <EmptyTransactions onAdd={() => setTab("add")}/>}
                 {filteredExpenses.length > 0 && <div className="table-pagination"><span>Showing {(transactionPage - 1) * transactionPageSize + 1}–{Math.min(transactionPage * transactionPageSize, filteredExpenses.length)} of {filteredExpenses.length} transactions</span><div><button disabled={transactionPage === 1} onClick={() => setTransactionPage(page => page - 1)}>‹</button>{Array.from({length: transactionPageCount}, (_, index) => <button key={index} className={transactionPage === index + 1 ? "active" : ""} onClick={() => setTransactionPage(index + 1)}>{index + 1}</button>)}<button disabled={transactionPage === transactionPageCount} onClick={() => setTransactionPage(page => page + 1)}>›</button></div></div>}
               </div>
